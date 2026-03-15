@@ -1,0 +1,43 @@
+services:
+  apache:
+    build: .
+    container_name: apache-httpd
+    environment:
+      - ALBUMS_DIR=/opt/albums
+      # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
+      - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
+      - EASYDNS_USERNAME=${EASYDNS_USERNAME:-}
+      - EASYDNS_PASSWORD=${EASYDNS_PASSWORD:-}
+      # Optional tuning
+      - EASYDNS_SERVER=${EASYDNS_SERVER:-}
+      - EASYDNS_INTERVAL_SECONDS=${EASYDNS_INTERVAL_SECONDS:-300}
+    volumes:
+      # Host path to albums is configurable because Docker Desktop/WSL can be picky
+      # about direct UNC mounts. Set ALBUMS_HOST_PATH to either:
+      # - a mapped drive (recommended):  Z:/
+      # - a local folder:               D:/some/folder
+      # - or (if supported) a UNC path: //Drgift/eti/ØrMet
+      - "${ALBUMS_HOST_PATH:-./albums}:/opt/albums:ro"
+    ports:
+      - "8585:80"
+    networks:
+      - default
+
+  ansible:
+    image: python:3.11-slim
+    container_name: ansible-control
+    working_dir: /ansible
+    volumes:
+      - ./ansible:/ansible
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+      - ANSIBLE_CONFIG=/ansible/ansible.cfg
+    command: sh /ansible/run-playbook.sh
+    depends_on:
+      - apache
+    networks:
+      - default
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4

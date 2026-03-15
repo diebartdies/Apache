@@ -1,0 +1,19 @@
+---
+- name: Apache Status Check
+  hosts: apache
+  gather_facts: yes
+  tasks:
+    - name: Check Apache is running
+      command: systemctl status apache2
+      register: apache_status
+      ignore_errors: yes
+
+    - name: Get Apache version
+      command: apache2ctl -v
+      register: apache_version
+
+    - name: Display Apache info
+      debug:
+        msg: |
+          Apache Version:
+          {{ apache_version.stdout }}
