@@ -43,6 +43,15 @@ EOF
 
 start_easydns_ddns
 
+if [ "${SYNC_DISCS_ON_STARTUP:-1}" = "1" ]; then
+	echo "PostgreSQL sync: attempting startup sync"
+	if ! /opt/venv/bin/python /opt/webapp/disc_sync.py; then
+		echo "PostgreSQL sync: startup sync failed (continuing)"
+	fi
+else
+	echo "PostgreSQL sync: disabled (set SYNC_DISCS_ON_STARTUP=1 to enable)"
+fi
+
 # Start the Python web.py app inside the same container.
 /opt/venv/bin/python /opt/webapp/app.py &
 

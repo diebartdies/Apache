@@ -6,10 +6,13 @@ import urllib.parse
 import web
 from waitress import serve
 
+from disc_sync import is_database_configured, sync_discs
+
 urls = (
     "/", "Index",
     "/buy", "Buy",
     "/album", "Album",
+    "/sync-discs", "SyncDiscs",
 )
 
 _FALLBACK_PRODUCTS = [
@@ -93,7 +96,7 @@ def page(title: str, body: str) -> str:
   </head>
   <body>
     <h1>{html.escape(title)}</h1>
-    <p><a href=\"/\">Store</a></p>
+        <p><a href="/">Store</a> | <a href="/sync-discs">Sync discs to PostgreSQL</a></p>
     {body}
   </body>
 </html>
@@ -199,6 +202,28 @@ class Buy:
             "<p>This is a demo checkout (no payment processing).</p>"
         )
         return page("Purchase", body)
+
+
+class SyncDiscs:
+    def GET(self):
+        if not is_database_configured():
+            return page(
+                "Sync discs",
+                "<p>PostgreSQL is not configured. Set DATABASE_URL or POSTGRES_* environment variables.</p>",
+            )
+
+        albums_dir = os.environ.get("ALBUMS_DIR", "").strip()
+        try:
+            result = sync_discs(PRODUCTS, albums_dir)
+        except Exception as exc:
+            return page("Sync discs", f"<p>Sync failed: {web.websafe(str(exc))}</p>")
+
+        body = (
+            "<p>Sync completed successfully.</p>"
+            f"<p>Albums synced: <strong>{result['albums_synced']}</strong></p>"
+            f"<p>Tracks synced: <strong>{result['tracks_synced']}</strong></p>"
+        )
+        return page("Sync discs", body)
 
 
 app = web.application(urls, globals())

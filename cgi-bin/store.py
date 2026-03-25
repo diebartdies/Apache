@@ -2,6 +2,7 @@
 
 import html
 import os
+import sys
 from pathlib import Path
 import urllib.parse
 
@@ -85,11 +86,41 @@ def _render_page(title: str, body_html: str) -> str:
   </head>
   <body>
     <h1>{html.escape(title)}</h1>
-    <p><a href=\"/\">Home</a> | <a href=\"/cgi-bin/store.py\">Store</a></p>
+    <p><a href=\"/\">Home</a> | <a href=\"/cgi-bin/store.py\">Store</a> | <a href=\"/cgi-bin/store.py?action=sync\">Sync discs to PostgreSQL</a></p>
     {body_html}
   </body>
 </html>
 """
+
+
+def _sync_discs_to_postgres() -> str:
+    webapp_dir = (Path(__file__).resolve().parents[1] / "webapp").as_posix()
+    if webapp_dir not in sys.path:
+        sys.path.insert(0, webapp_dir)
+
+    try:
+        from disc_sync import is_database_configured, sync_discs
+    except Exception as exc:
+        return _render_page("Sync discs", f"<p>Sync failed: {html.escape(str(exc))}</p>")
+
+    if not is_database_configured():
+        return _render_page(
+            "Sync discs",
+            "<p>PostgreSQL is not configured. Set DATABASE_URL or POSTGRES_* environment variables.</p>",
+        )
+
+    albums_dir = os.environ.get("ALBUMS_DIR", "").strip()
+    try:
+        result = sync_discs(PRODUCTS, albums_dir)
+    except Exception as exc:
+        return _render_page("Sync discs", f"<p>Sync failed: {html.escape(str(exc))}</p>")
+
+    body = (
+        "<p>Sync completed successfully.</p>"
+        f"<p>Albums synced: <strong>{result['albums_synced']}</strong></p>"
+        f"<p>Tracks synced: <strong>{result['tracks_synced']}</strong></p>"
+    )
+    return _render_page("Sync discs", body)
 
 
 def main() -> None:
@@ -101,7 +132,9 @@ def main() -> None:
     action: str = (query.get("action", [""])[0] or "list").lower()
     product_id = query.get("id", [""])[0]
 
-    if action == "buy" and product_id:
+    if action == "sync":
+        page = _sync_discs_to_postgres()
+    elif action == "buy" and product_id:
         product = _find_product(product_id)
         if not product:
             body = "<p>Unknown product.</p>"

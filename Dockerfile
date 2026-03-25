@@ -11,7 +11,7 @@ RUN apt-get update \
 # PEP 668: install non-Debian Python packages into a virtualenv
 RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-  && /opt/venv/bin/pip install --no-cache-dir web.py waitress ansible
+  && /opt/venv/bin/pip install --no-cache-dir web.py waitress ansible "psycopg[binary]"
 
 # Add ansible binaries to PATH by symlinking to /usr/local/bin
 RUN ln -s /opt/venv/bin/ansible* /usr/local/bin/
@@ -47,7 +47,7 @@ COPY start-webpy.sh /usr/local/bin/start-webpy.sh
 RUN sed -i 's/\r$//' /usr/local/apache2/cgi-bin/*.py \
   && chmod 755 /usr/local/apache2/cgi-bin/*.py
 
-RUN sed -i 's/\r$//' /usr/local/bin/start-webpy.sh /opt/webapp/app.py \
+RUN sed -i 's/\r$//' /usr/local/bin/start-webpy.sh /opt/webapp/*.py \
   && chmod 755 /usr/local/bin/start-webpy.sh
 
 CMD ["/usr/local/bin/start-webpy.sh"]

@@ -5,6 +5,12 @@ services:
     restart: unless-stopped
     environment:
       - ALBUMS_DIR=/opt/albums
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=musicstore
+      - POSTGRES_USER=musicstore
+      - POSTGRES_PASSWORD=musicstore
+      - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
       # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
       - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
       - EASYDNS_USERNAME=${EASYDNS_USERNAME:-}
@@ -21,21 +27,54 @@ services:
       - "${ALBUMS_HOST_PATH:-./albums}:/opt/albums:ro"
     ports:
       - "8585:80"
+    depends_on:
+      - postgres
+    networks:
+      - default
+
+  postgres:
+    image: postgres:16
+    container_name: apache-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=musicstore
+      - POSTGRES_USER=musicstore
+      - POSTGRES_PASSWORD=musicstore
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - default
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+      - "8444:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - apache
     networks:
       - default
 
   ansible:
-    image: python:3.11-slim
+    image: docker:27-cli
     container_name: ansible-control
     restart: unless-stopped
     working_dir: /ansible
     volumes:
       - ./ansible:/ansible
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${USERPROFILE}/.ssh:/root/.ssh:ro
     environment:
       - ANSIBLE_HOST_KEY_CHECKING=False
       - ANSIBLE_CONFIG=/ansible/ansible.cfg
-    command: sh /ansible/run-playbook.sh
+    command: sh -c "apk add --no-cache ansible-core openssh-client iputils netcat-openbsd >/dev/null 2>&1; sleep 5; ansible-playbook -i /ansible/inventory.ini /ansible/site.yml; tail -f /dev/null"
     depends_on:
       - apache
     networks:
@@ -43,3 +82,6 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
+
+volumes:
+  postgres_data:
