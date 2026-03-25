@@ -2,6 +2,7 @@ services:
   apache:
     build: .
     container_name: apache-httpd
+    restart: unless-stopped
     environment:
       - ALBUMS_DIR=/opt/albums
       # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
@@ -26,6 +27,7 @@ services:
   ansible:
     image: python:3.11-slim
     container_name: ansible-control
+    restart: unless-stopped
     working_dir: /ansible
     volumes:
       - ./ansible:/ansible
