@@ -16,9 +16,15 @@ on:
 jobs:
   plan:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     defaults:
       run:
         working-directory: terraform
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'sa-east-1' }}
 
     steps:
       - name: Checkout
@@ -28,6 +34,29 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.8.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials (OIDC role)
+        if: secrets.AWS_ROLE_TO_ASSUME != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Configure AWS credentials (Access Keys)
+        if: secrets.AWS_ROLE_TO_ASSUME == '' && secrets.AWS_ACCESS_KEY_ID != '' && secrets.AWS_SECRET_ACCESS_KEY != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Verify AWS credentials are configured
+        run: |
+          if [ -z "${AWS_ACCESS_KEY_ID}" ] && [ -z "${AWS_WEB_IDENTITY_TOKEN_FILE}" ]; then
+            echo "::error::AWS credentials are not configured. Set either AWS_ROLE_TO_ASSUME (OIDC) or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY secrets."
+            exit 1
+          fi
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -36,4 +65,4 @@ jobs:
         run: terraform validate
 
       - name: Terraform Plan
-        run: terraform plan -input=false
+        run: terraform plan -input=false -no-color
