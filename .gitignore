@@ -16,5 +16,8 @@ Thumbs.db
 # Logs
 *.log
 
+# Terraform local cache
+terraform/.terraform/
+
 # Local TLS cert artifacts
 nginx/certs/
