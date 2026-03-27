@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: musicstore-albums-pvc
+  namespace: musicstore
+spec:
+  storageClassName: gp3
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: musicstore-postgres
+  namespace: musicstore
+spec:
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        storageClassName: gp3

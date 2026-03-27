@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: musicstore-apache
+  namespace: musicstore
+spec:
+  template:
+    spec:
+      containers:
+        - name: apache
+          # Replace with your ECR image URL
+          image: 123456789012.dkr.ecr.sa-east-1.amazonaws.com/musicstore/apache:latest
+          imagePullPolicy: Always
