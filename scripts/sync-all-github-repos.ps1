@@ -6,6 +6,8 @@ $ErrorActionPreference = "Stop"
 
 $logDir = Join-Path $env:ProgramData "RepoSync"
 $logFile = Join-Path $logDir "sync-all.log"
+$mutexName = "Global\GitHubAutoSyncAllReposMutex"
+$mutex = $null
 
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -16,6 +18,28 @@ function Write-Log {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | $Message"
     Add-Content -Path $logFile -Value $line
     Write-Host $line
+}
+
+function Remove-AdditionalSyncProcesses {
+    param([int]$CurrentPid)
+
+    try {
+        $pattern = "sync-all-github-repos\.ps1|run-sync-hidden\.vbs"
+        $processes = Get-CimInstance Win32_Process |
+            Where-Object {
+                $_.ProcessId -ne $CurrentPid -and
+                $_.CommandLine -and
+                $_.CommandLine -match $pattern
+            }
+
+        foreach ($proc in $processes) {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+            Write-Log "Killed additional sync instance PID=$($proc.ProcessId)"
+        }
+    }
+    catch {
+        Write-Log "Could not inspect/kill additional instances: $($_.Exception.Message)"
+    }
 }
 
 function Sync-Repo {
@@ -77,6 +101,15 @@ function Sync-Repo {
 }
 
 try {
+    $createdNew = $false
+    $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref]$createdNew)
+    if (-not $createdNew) {
+        Write-Log "Another sync instance is already running; exiting."
+        exit 0
+    }
+
+    Remove-AdditionalSyncProcesses -CurrentPid $PID
+
     if (-not (Test-Path $ConfigPath)) {
         throw "Config file not found: $ConfigPath"
     }
@@ -96,4 +129,15 @@ try {
 catch {
     Write-Log "FATAL: $($_.Exception.Message)"
     exit 1
+}
+finally {
+    if ($mutex) {
+        try {
+            $mutex.ReleaseMutex() | Out-Null
+        }
+        catch {
+            # no-op
+        }
+        $mutex.Dispose()
+    }
 }
