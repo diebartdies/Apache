@@ -9,7 +9,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=musicstore
       - POSTGRES_USER=musicstore
-      - POSTGRES_PASSWORD=musicstore
+      - POSTGRES_PASSWORD=Palo1010
       - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
       # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
       - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
@@ -39,7 +39,7 @@ services:
     environment:
       - POSTGRES_DB=musicstore
       - POSTGRES_USER=musicstore
-      - POSTGRES_PASSWORD=musicstore
+      - POSTGRES_PASSWORD=Palo1010
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

@@ -155,7 +155,12 @@ def page(title: str, body: str) -> str:
         background: rgba(222, 184, 135, 0.95);
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       }}
-      .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; padding: 0; }}
+            .grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+                gap: clamp(12px, 2vw, 20px);
+                padding: 0;
+            }}
       .card {{ border: none; border-radius: 16px; padding: 16px; background: rgba(100, 150, 220, 0.9); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); transition: all 0.3s ease; cursor: pointer; display: flex; flex-direction: column; height: 100%; min-height: 380px; }}
       .card:hover {{ transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); }}
       .thumb {{ width: 100%; max-width: 300px; height: auto; display: block; border-radius: 12px; margin-bottom: 10px; transition: transform 0.3s ease; }}
