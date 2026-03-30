@@ -82,22 +82,113 @@ def page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html>
   <head>
-    <meta charset=\"utf-8\" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{html.escape(title)}</title>
-        <style>
-            body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background-color: #f0f0f0; }}
-            .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; padding: 0; }}
-            .card {{ border: 1px solid #ddd; border-radius: 8px; padding: 12px; }}
-            .thumb {{ width: 100%; max-width: 300px; height: auto; display: block; border-radius: 6px; }}
-            .title {{ margin: 10px 0 6px; font-weight: 600; }}
-            .meta {{ margin: 0 0 10px; }}
-            .actions a {{ margin-right: 10px; }}
-        </style>
+    <style>
+      :root {{
+        --ink: #0f2b46;
+        --soft-ink: #35526b;
+        --card: rgba(255, 255, 255, 0.86);
+        --line: rgba(10, 39, 74, 0.12);
+        --accent: #2a82d8;
+      }}
+      * {{ box-sizing: border-box; }}
+      body {{
+        margin: 0;
+        color: var(--ink);
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background-image: url('/Webback.jpg');
+        background-repeat: repeat;
+        background-attachment: fixed;
+        background-size: 80px 80px;
+      }}
+      .page {{
+        max-width: 1060px;
+        margin: 26px auto;
+        padding: 0 16px;
+      }}
+      .hero {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-bottom: 24px;
+        padding: 18px 20px;
+        border: none;
+        border-radius: 16px;
+        background: var(--card);
+        backdrop-filter: blur(2px);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }}
+      .brand {{
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }}
+      .logo {{
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
+        object-fit: cover;
+        box-shadow: 0 6px 16px rgba(42, 130, 216, .35);
+        flex-shrink: 0;
+      }}
+      h1 {{
+        margin: 0;
+        font-size: clamp(1.3rem, 2vw, 1.85rem);
+        line-height: 1.25;
+      }}
+      h2 {{ margin: 20px 0 18px; font-size: 1.4rem; font-weight: 800; }}
+      .nav a {{
+        color: var(--ink);
+        text-decoration: none;
+        margin-right: 14px;
+        font-weight: 600;
+      }}
+      .nav a:hover {{ color: var(--accent); }}
+      .content {{
+        border: none;
+        border-radius: 16px;
+        padding: 24px;
+        background: rgba(222, 184, 135, 0.95);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }}
+      .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; padding: 0; }}
+      .card {{ border: none; border-radius: 16px; padding: 16px; background: rgba(100, 150, 220, 0.9); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); transition: all 0.3s ease; cursor: pointer; display: flex; flex-direction: column; height: 100%; min-height: 380px; }}
+      .card:hover {{ transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); }}
+      .thumb {{ width: 100%; max-width: 300px; height: auto; display: block; border-radius: 12px; margin-bottom: 10px; transition: transform 0.3s ease; }}
+      .card:hover .thumb {{ transform: scale(1.05); }}
+      .title {{ margin: 12px 0 8px 0; font-weight: 800; font-size: clamp(0.9rem, 4vw, 1.1rem); color: #000000; text-transform: uppercase; word-wrap: break-word; overflow-wrap: break-word; }}
+      .meta {{ margin: 0 0 12px 0; color: #1a1a1a; font-size: 1.2rem; font-weight: 700; }}
+      .actions {{ display: flex; gap: 8px; margin-top: auto; }}
+      .actions a {{ flex: 1; padding: 10px 12px; background: #000000; color: #ffffff; text-decoration: none; font-weight: 700; border-radius: 8px; text-align: center; transition: all 0.2s ease; font-size: 0.95rem; }}
+      .actions a:hover {{ background: #333333; transform: scale(1.05); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); }}
+      .actions a:hover {{ text-decoration: underline; }}
+      ul {{ padding-left: 20px; }}
+      li {{ margin-bottom: 14px; }}
+      audio {{ width: min(520px, 100%); margin-top: 6px; }}
+      em {{ color: var(--soft-ink); }}
+    </style>
   </head>
   <body>
-    <h1>{html.escape(title)}</h1>
-        <p><a href="/">Store</a> | <a href="/sync-discs">Sync discs to PostgreSQL</a></p>
-    {body}
+    <main class="page">
+      <header class="hero">
+        <div class="brand">
+          <img class="logo" src="/ormet.jpeg" alt="Music Store Logo" />
+          <div>
+            <h1>{html.escape(title)}</h1>
+            <p style="margin: 4px 0 0 0; color: var(--soft-ink); font-size: 0.95rem; font-weight: 500;">Ormet</p>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Main">
+          <a href="/">Store</a>
+          <a href="/sync-discs">Sync discs to PostgreSQL</a>
+        </nav>
+      </header>
+      <section class="content">{body}</section>
+    </main>
   </body>
 </html>
 """
