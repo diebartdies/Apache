@@ -10,6 +10,8 @@ services:
       - POSTGRES_DB=musicstore
       - POSTGRES_USER=musicstore
       - POSTGRES_PASSWORD=Palo1010
+      - MEDIA_SIGNING_KEY=${MEDIA_SIGNING_KEY:-change-this-prod-secret}
+      - MEDIA_URL_TTL_SECONDS=${MEDIA_URL_TTL_SECONDS:-300}
       - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
       # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
       - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
@@ -26,7 +28,7 @@ services:
       # - or (if supported) a UNC path: //Drgift/eti/ØrMet
       - "${ALBUMS_HOST_PATH:-./albums}:/opt/albums:ro"
     ports:
-      - "8585:80"
+      - "${APACHE_PORT:-8585}:80"
     depends_on:
       - postgres
     networks:
@@ -52,8 +54,8 @@ services:
     container_name: nginx
     restart: unless-stopped
     ports:
-      - "8081:80"
-      - "8444:443"
+      - "${HTTP_PORT:-8081}:80"
+      - "${HTTPS_PORT:-8444}:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro

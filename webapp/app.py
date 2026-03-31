@@ -1,6 +1,10 @@
 import html
+import hashlib
+import hmac
+import mimetypes
 import os
 from pathlib import Path
+import time
 import urllib.parse
 
 import web
@@ -12,8 +16,12 @@ urls = (
     "/", "Index",
     "/buy", "Buy",
     "/album", "Album",
+    "/media", "Media",
     "/sync-discs", "SyncDiscs",
 )
+
+_MEDIA_ALLOWED_EXTENSIONS = {".wav", ".jpg", ".jpeg"}
+_MEDIA_CHUNK_SIZE = 64 * 1024
 
 _FALLBACK_PRODUCTS = [
     {"id": "album-001", "name": "Lo-Fi Nights (Album)", "price": 9.99},
@@ -36,9 +44,7 @@ def _load_products_from_dir(albums_dir: str):
             )
             thumb_url = None
             if jpgs:
-                album_url = urllib.parse.quote(entry.name, safe="")
-                img_url = urllib.parse.quote(jpgs[0].name, safe="")
-                thumb_url = f"/albums/{album_url}/{img_url}"
+                thumb_url = jpgs[0].name
 
             products.append(
                 {
@@ -71,6 +77,59 @@ PRODUCTS, PRODUCTS_NOTE = load_products()
 PRODUCT_BY_ID = {p["id"]: p for p in PRODUCTS}
 
 
+def _get_media_signing_key() -> str:
+    return os.environ.get("MEDIA_SIGNING_KEY", "dev-only-change-me").strip() or "dev-only-change-me"
+
+
+def _get_media_url_ttl_seconds() -> int:
+    raw = os.environ.get("MEDIA_URL_TTL_SECONDS", "300").strip()
+    try:
+        ttl = int(raw)
+    except ValueError:
+        return 300
+    return max(30, min(ttl, 3600))
+
+
+def _media_signature(album: str, file_name: str, exp: int) -> str:
+    payload = f"{album}\n{file_name}\n{exp}".encode("utf-8")
+    return hmac.new(_get_media_signing_key().encode("utf-8"), payload, hashlib.sha256).hexdigest()
+
+
+def _build_media_url(album: str, file_name: str) -> str:
+    exp = int(time.time()) + _get_media_url_ttl_seconds()
+    sig = _media_signature(album, file_name, exp)
+    qs = urllib.parse.urlencode({"album": album, "file": file_name, "exp": str(exp), "sig": sig})
+    return f"/media?{qs}"
+
+
+def _resolve_media_path(album: str, file_name: str):
+    albums_dir = os.environ.get("ALBUMS_DIR", "").strip()
+    if not albums_dir:
+        return None, "Album directory not configured."
+
+    root_path = Path(albums_dir).resolve()
+    media_path = (root_path / album / file_name).resolve()
+    if root_path not in media_path.parents:
+        return None, "Invalid media path."
+
+    if media_path.suffix.lower() not in _MEDIA_ALLOWED_EXTENSIONS:
+        return None, "Unsupported media type."
+
+    return media_path, None
+
+
+def _iter_file_bytes(path: Path, start: int, end: int):
+    with path.open("rb") as handle:
+        handle.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            chunk = handle.read(min(_MEDIA_CHUNK_SIZE, remaining))
+            if not chunk:
+                break
+            remaining -= len(chunk)
+            yield chunk
+
+
 def find_product(product_id: str):
     for product in PRODUCTS:
         if product["id"] == product_id:
@@ -78,7 +137,25 @@ def find_product(product_id: str):
     return None
 
 
+def _is_mobile_request() -> bool:
+    user_agent = (web.ctx.env.get("HTTP_USER_AGENT", "") or "").lower()
+    mobile_tokens = (
+        "android",
+        "iphone",
+        "ipad",
+        "ipod",
+        "mobile",
+        "windows phone",
+        "opera mini",
+    )
+    return any(token in user_agent for token in mobile_tokens)
+
+
 def page(title: str, body: str) -> str:
+    is_mobile = _is_mobile_request()
+    device_class = "mobile" if is_mobile else "desktop"
+    sync_label = "Sync discs" if is_mobile else "Sync discs to PostgreSQL"
+
     return f"""<!doctype html>
 <html>
   <head>
@@ -175,9 +252,16 @@ def page(title: str, body: str) -> str:
       li {{ margin-bottom: 14px; }}
       audio {{ width: min(520px, 100%); margin-top: 6px; }}
       em {{ color: var(--soft-ink); }}
+            body.mobile .page {{ margin: 14px auto; padding: 0 10px; }}
+            body.mobile .hero {{ padding: 14px; border-radius: 14px; }}
+            body.mobile .content {{ padding: 14px; }}
+            body.mobile .card {{ min-height: 0; padding: 12px; }}
+            body.mobile .actions {{ flex-direction: column; }}
+            body.mobile .actions a {{ width: 100%; }}
+            body.mobile .nav a {{ margin-right: 10px; font-size: 0.9rem; }}
     </style>
   </head>
-  <body>
+    <body class="{device_class}">
     <main class="page">
       <header class="hero">
         <div class="brand">
@@ -189,7 +273,7 @@ def page(title: str, body: str) -> str:
         </div>
         <nav class="nav" aria-label="Main">
           <a href="/">Store</a>
-          <a href="/sync-discs">Sync discs to PostgreSQL</a>
+                    <a href="/sync-discs">{sync_label}</a>
         </nav>
       </header>
       <section class="content">{body}</section>
@@ -209,8 +293,8 @@ class Index:
             price = web.websafe(f"${product['price']:.2f}")
 
             thumb = ""
-            if product.get("thumb"):
-                src = web.websafe(product["thumb"])
+            if product.get("thumb") and product.get("folder"):
+                src = web.websafe(_build_media_url(product["folder"], product["thumb"]))
                 alt = name
                 thumb = f"<img class=\"thumb\" src=\"{src}\" alt=\"{alt}\" loading=\"lazy\" />"
 
@@ -255,24 +339,20 @@ class Album:
         if not wavs:
             return page("Album", "<p>No .wav files found for this album.</p>")
 
-        album_url = urllib.parse.quote(album_folder, safe="")
-
         cover = ""
         jpgs = sorted(
             [p for p in [*album_path.glob("*.jpg"), *album_path.glob("*.jpeg")] if "3000x3000" in p.name.lower()],
             key=lambda p: p.name.lower(),
         )
         if jpgs:
-            img_url = urllib.parse.quote(jpgs[0].name, safe="")
-            src = f"/albums/{album_url}/{img_url}"
+            src = _build_media_url(album_folder, jpgs[0].name)
             cover = f"<p><img src=\"{src}\" alt=\"{web.websafe(product['name'])}\" width=\"240\" loading=\"lazy\" /></p>"
 
         rows = []
         for wav in wavs:
             wav_name = wav.name
-            wav_url = urllib.parse.quote(wav_name, safe="")
             safe_label = web.websafe(wav_name)
-            src = f"/albums/{album_url}/{wav_url}"
+            src = _build_media_url(album_folder, wav_name)
             rows.append(
                 "<li>"
                 f"<div>{safe_label}</div>"
@@ -298,6 +378,90 @@ class Buy:
             "<p>This is a demo checkout (no payment processing).</p>"
         )
         return page("Purchase", body)
+
+
+class Media:
+    def GET(self):
+        req = web.input(album="", file="", exp="", sig="")
+        album = (req.album or "").strip()
+        file_name = (req.file or "").strip()
+        exp_raw = (req.exp or "").strip()
+        sig = (req.sig or "").strip()
+
+        if not album or not file_name or not exp_raw or not sig:
+            web.ctx.status = "400 Bad Request"
+            return b"Missing media signature parameters."
+
+        try:
+            exp = int(exp_raw)
+        except ValueError:
+            web.ctx.status = "400 Bad Request"
+            return b"Invalid expiry."
+
+        if int(time.time()) > exp:
+            web.ctx.status = "403 Forbidden"
+            return b"Media URL expired."
+
+        expected_sig = _media_signature(album, file_name, exp)
+        if not hmac.compare_digest(sig, expected_sig):
+            web.ctx.status = "403 Forbidden"
+            return b"Invalid media signature."
+
+        media_path, path_error = _resolve_media_path(album, file_name)
+        if path_error:
+            web.ctx.status = "403 Forbidden"
+            return path_error.encode("utf-8")
+
+        if not media_path or not media_path.exists() or not media_path.is_file():
+            web.ctx.status = "404 Not Found"
+            return b"Media file not found."
+
+        total_size = media_path.stat().st_size
+        if total_size <= 0:
+            web.ctx.status = "404 Not Found"
+            return b"Media file is empty."
+
+        content_type, _ = mimetypes.guess_type(media_path.name)
+        if not content_type:
+            content_type = "application/octet-stream"
+
+        start = 0
+        end = total_size - 1
+        status = "200 OK"
+        range_header = web.ctx.env.get("HTTP_RANGE", "")
+        if range_header.startswith("bytes="):
+            raw_range = range_header[len("bytes="):].split(",", 1)[0].strip()
+            if "-" in raw_range:
+                left, right = raw_range.split("-", 1)
+                try:
+                    if left == "":
+                        suffix_len = int(right)
+                        if suffix_len > 0:
+                            start = max(total_size - suffix_len, 0)
+                    else:
+                        start = int(left)
+                    if right != "":
+                        end = int(right)
+                except ValueError:
+                    start = 0
+                    end = total_size - 1
+
+                start = max(0, min(start, total_size - 1))
+                end = max(start, min(end, total_size - 1))
+                status = "206 Partial Content"
+
+        web.ctx.status = status
+        web.header("Content-Type", content_type)
+        web.header("Accept-Ranges", "bytes")
+        web.header("Cache-Control", "private, max-age=60")
+        web.header("X-Content-Type-Options", "nosniff")
+
+        content_length = end - start + 1
+        web.header("Content-Length", str(content_length))
+        if status == "206 Partial Content":
+            web.header("Content-Range", f"bytes {start}-{end}/{total_size}")
+
+        return _iter_file_bytes(media_path, start, end)
 
 
 class SyncDiscs:

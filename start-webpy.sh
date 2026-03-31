@@ -17,7 +17,7 @@ start_easydns_ddns() {
 	conf="/etc/ddclient.conf"
 	umask 077
 
-	server="${EASYDNS_SERVER:-api.cp.easydns.com}"
+	server="${EASYDNS_SERVER:-members.easydns.com}"
 	interval="${EASYDNS_INTERVAL_SECONDS:-300}"
 
 	cat >"$conf" <<EOF
@@ -25,7 +25,7 @@ daemon=$interval
 pid=/var/run/ddclient.pid
 ssl=yes
 
-use=web, web=icanhazip.com/, web-skip=''
+use=web, web=checkip.amazonaws.com/
 
 protocol=dyndns2
 server=$server
