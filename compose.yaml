@@ -13,6 +13,14 @@ services:
       - MEDIA_SIGNING_KEY=${MEDIA_SIGNING_KEY:-change-this-prod-secret}
       - MEDIA_URL_TTL_SECONDS=${MEDIA_URL_TTL_SECONDS:-300}
       - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
+      # Optional: Microsoft Entra ID / OIDC SSO
+      - OIDC_TENANT_ID=${OIDC_TENANT_ID:-}
+      - OIDC_AUTHORITY=${OIDC_AUTHORITY:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - OIDC_USERINFO_ENDPOINT=${OIDC_USERINFO_ENDPOINT:-https://graph.microsoft.com/oidc/userinfo}
       # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
       - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
       - EASYDNS_USERNAME=${EASYDNS_USERNAME:-}

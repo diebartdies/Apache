@@ -19,6 +19,11 @@ docker compose up --build
 - CGI store: [http://localhost:8585/cgi-bin/store.py](http://localhost:8585/cgi-bin/store.py)
 - Sync discs to PostgreSQL: [http://localhost:8585/sync-discs](http://localhost:8585/sync-discs)
 
+If OIDC is configured:
+
+- Login: [http://localhost:8585/login](http://localhost:8585/login)
+- Callback: [http://localhost:8585/auth/callback](http://localhost:8585/auth/callback)
+
 ## PostgreSQL defaults
 
 The stack now includes a PostgreSQL service with these defaults:
@@ -33,6 +38,19 @@ The app reads DB connection from either:
 
 - `DATABASE_URL`, or
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+
+## Optional SSO (Microsoft Entra ID via OIDC)
+
+Set these environment variables to enable login:
+
+- `OIDC_TENANT_ID` (or `OIDC_AUTHORITY`)
+- `OIDC_CLIENT_ID`
+- `OIDC_CLIENT_SECRET`
+- `OIDC_REDIRECT_URI`
+- Optional: `OIDC_SCOPES` (default: `openid profile email`)
+- Optional: `OIDC_USERINFO_ENDPOINT` (default: `https://graph.microsoft.com/oidc/userinfo`)
+
+When OIDC is enabled, `/buy` and `/sync-discs` require login.
 
 ## What gets synced
 

@@ -1,11 +1,16 @@
 import html
+import base64
 import hashlib
 import hmac
+import json
 import mimetypes
 import os
 from pathlib import Path
+import secrets
 import time
 import urllib.parse
+import urllib.request
+import urllib.error
 
 import web
 from waitress import serve
@@ -18,6 +23,9 @@ urls = (
     "/album", "Album",
     "/media", "Media",
     "/sync-discs", "SyncDiscs",
+    "/login", "Login",
+    "/auth/callback", "AuthCallback",
+    "/logout", "Logout",
 )
 
 _MEDIA_ALLOWED_EXTENSIONS = {".wav", ".jpg", ".jpeg"}
@@ -130,6 +138,97 @@ def _iter_file_bytes(path: Path, start: int, end: int):
             yield chunk
 
 
+def _oidc_enabled() -> bool:
+    return bool(
+        os.environ.get("OIDC_CLIENT_ID", "").strip()
+        and os.environ.get("OIDC_CLIENT_SECRET", "").strip()
+        and os.environ.get("OIDC_REDIRECT_URI", "").strip()
+        and (
+            os.environ.get("OIDC_AUTHORITY", "").strip()
+            or os.environ.get("OIDC_TENANT_ID", "").strip()
+        )
+    )
+
+
+def _oidc_authority() -> str:
+    authority = os.environ.get("OIDC_AUTHORITY", "").strip().rstrip("/")
+    if authority:
+        return authority
+
+    tenant_id = os.environ.get("OIDC_TENANT_ID", "common").strip() or "common"
+    return f"https://login.microsoftonline.com/{tenant_id}/v2.0"
+
+
+def _oidc_endpoints() -> dict[str, str]:
+    authority = _oidc_authority()
+    return {
+        "authorize": f"{authority}/oauth2/v2.0/authorize",
+        "token": f"{authority}/oauth2/v2.0/token",
+        "logout": f"{authority}/oauth2/v2.0/logout",
+        "userinfo": os.environ.get("OIDC_USERINFO_ENDPOINT", "https://graph.microsoft.com/oidc/userinfo").strip(),
+    }
+
+
+def _oidc_scopes() -> str:
+    return os.environ.get("OIDC_SCOPES", "openid profile email").strip() or "openid profile email"
+
+
+def _is_authenticated() -> bool:
+    return bool(session.get("user"))
+
+
+def _current_user_display_name() -> str:
+    user = session.get("user")
+    if not user:
+        return ""
+    return (
+        user.get("name")
+        or user.get("preferred_username")
+        or user.get("email")
+        or "User"
+    )
+
+
+def _decode_jwt_payload_unverified(token: str) -> dict:
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(payload.encode("utf-8"))
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+
+
+def _http_post_form(url: str, form_data: dict[str, str]) -> dict:
+    encoded = urllib.parse.urlencode(form_data).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=encoded,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _http_get_json(url: str, headers: dict[str, str]) -> dict:
+    req = urllib.request.Request(url, method="GET", headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _require_authentication(next_path: str = "/"):
+    if not _oidc_enabled():
+        return
+    if _is_authenticated():
+        return
+    session["post_login_redirect"] = next_path
+    raise web.seeother("/login")
+
+
 def find_product(product_id: str):
     for product in PRODUCTS:
         if product["id"] == product_id:
@@ -155,6 +254,14 @@ def page(title: str, body: str) -> str:
     is_mobile = _is_mobile_request()
     device_class = "mobile" if is_mobile else "desktop"
     sync_label = "Sync discs" if is_mobile else "Sync discs to PostgreSQL"
+    signed_in = _is_authenticated()
+    whoami = web.websafe(_current_user_display_name()) if signed_in else ""
+    auth_nav = ""
+    if _oidc_enabled():
+        if signed_in:
+            auth_nav = f'<span style="margin-right:12px; color: var(--soft-ink);">{whoami}</span><a href="/logout">Logout</a>'
+        else:
+            auth_nav = '<a href="/login">Login</a>'
 
     return f"""<!doctype html>
 <html>
@@ -274,6 +381,7 @@ def page(title: str, body: str) -> str:
         <nav class="nav" aria-label="Main">
           <a href="/">Store</a>
                     <a href="/sync-discs">{sync_label}</a>
+                    {auth_nav}
         </nav>
       </header>
       <section class="content">{body}</section>
@@ -366,6 +474,7 @@ class Album:
 
 class Buy:
     def GET(self):
+        _require_authentication(next_path=web.ctx.fullpath)
         user_input_id = web.input(id="").id
         product = find_product(user_input_id)
         if not product:
@@ -466,6 +575,7 @@ class Media:
 
 class SyncDiscs:
     def GET(self):
+        _require_authentication(next_path=web.ctx.fullpath)
         if not is_database_configured():
             return page(
                 "Sync discs",
@@ -486,7 +596,124 @@ class SyncDiscs:
         return page("Sync discs", body)
 
 
+class Login:
+    def GET(self):
+        if not _oidc_enabled():
+            return page("Login", "<p>SSO is not configured. Set OIDC_* environment variables.</p>")
+
+        if _is_authenticated():
+            raise web.seeother("/")
+
+        state = secrets.token_urlsafe(24)
+        nonce = secrets.token_urlsafe(24)
+        session["oidc_state"] = state
+        session["oidc_nonce"] = nonce
+
+        req = web.input(next="")
+        next_path = (req.next or "").strip()
+        if next_path.startswith("/"):
+            session["post_login_redirect"] = next_path
+
+        endpoints = _oidc_endpoints()
+        params = {
+            "client_id": os.environ.get("OIDC_CLIENT_ID", "").strip(),
+            "response_type": "code",
+            "redirect_uri": os.environ.get("OIDC_REDIRECT_URI", "").strip(),
+            "response_mode": "query",
+            "scope": _oidc_scopes(),
+            "state": state,
+            "nonce": nonce,
+        }
+        raise web.seeother(f"{endpoints['authorize']}?{urllib.parse.urlencode(params)}")
+
+
+class AuthCallback:
+    def GET(self):
+        if not _oidc_enabled():
+            return page("Login", "<p>SSO is not configured.</p>")
+
+        req = web.input(code="", state="", error="", error_description="")
+        if req.error:
+            return page(
+                "Login",
+                f"<p>Login failed: {web.websafe(req.error)} {web.websafe(req.error_description or '')}</p>",
+            )
+
+        expected_state = session.get("oidc_state")
+        if not expected_state or req.state != expected_state:
+            return page("Login", "<p>Invalid login state. Please try again.</p>")
+
+        code = (req.code or "").strip()
+        if not code:
+            return page("Login", "<p>Authorization code missing.</p>")
+
+        endpoints = _oidc_endpoints()
+        token_payload = {
+            "client_id": os.environ.get("OIDC_CLIENT_ID", "").strip(),
+            "client_secret": os.environ.get("OIDC_CLIENT_SECRET", "").strip(),
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": os.environ.get("OIDC_REDIRECT_URI", "").strip(),
+            "scope": _oidc_scopes(),
+        }
+
+        try:
+            token_response = _http_post_form(endpoints["token"], token_payload)
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8")
+            except Exception:
+                detail = str(exc)
+            return page("Login", f"<p>Token exchange failed: {web.websafe(detail)}</p>")
+        except Exception as exc:
+            return page("Login", f"<p>Token exchange failed: {web.websafe(str(exc))}</p>")
+
+        id_token = token_response.get("id_token", "")
+        access_token = token_response.get("access_token", "")
+
+        claims = _decode_jwt_payload_unverified(id_token) if id_token else {}
+        if access_token and endpoints.get("userinfo"):
+            try:
+                userinfo = _http_get_json(
+                    endpoints["userinfo"],
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if isinstance(userinfo, dict):
+                    claims.update(userinfo)
+            except Exception:
+                pass
+
+        session["user"] = {
+            "sub": claims.get("sub", ""),
+            "name": claims.get("name") or claims.get("given_name") or "",
+            "preferred_username": claims.get("preferred_username", ""),
+            "email": claims.get("email", ""),
+        }
+        session.pop("oidc_state", None)
+        session.pop("oidc_nonce", None)
+
+        redirect_target = session.pop("post_login_redirect", "/")
+        if not isinstance(redirect_target, str) or not redirect_target.startswith("/"):
+            redirect_target = "/"
+        raise web.seeother(redirect_target)
+
+
+class Logout:
+    def GET(self):
+        session.pop("user", None)
+        session.pop("oidc_state", None)
+        session.pop("oidc_nonce", None)
+        session.pop("post_login_redirect", None)
+        raise web.seeother("/")
+
+
 app = web.application(urls, globals())
+session = web.session.Session(
+    app,
+    web.session.DiskStore("/tmp/webpy-sessions"),
+    initializer={"user": None, "oidc_state": None, "oidc_nonce": None, "post_login_redirect": "/"},
+)
 
 if __name__ == "__main__":
     serve(app.wsgifunc(), host="127.0.0.1", port=9000)
