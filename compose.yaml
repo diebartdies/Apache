@@ -13,6 +13,12 @@ services:
       - MEDIA_SIGNING_KEY=${MEDIA_SIGNING_KEY:-change-this-prod-secret}
       - MEDIA_URL_TTL_SECONDS=${MEDIA_URL_TTL_SECONDS:-300}
       - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
+      # Optional: LDAP auth
+      - LDAP_SERVER_URL=${LDAP_SERVER_URL:-}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-}
+      - LDAP_UPN_DOMAIN=${LDAP_UPN_DOMAIN:-}
+      - LDAP_VALIDATE_CERTS=${LDAP_VALIDATE_CERTS:-0}
+      - LDAP_CA_CERT_FILE=${LDAP_CA_CERT_FILE:-}
       # Optional: Microsoft Entra ID / OIDC SSO
       - OIDC_TENANT_ID=${OIDC_TENANT_ID:-}
       - OIDC_AUTHORITY=${OIDC_AUTHORITY:-}
@@ -39,6 +45,27 @@ services:
       - "${APACHE_PORT:-8585}:80"
     depends_on:
       - postgres
+    networks:
+      - default
+
+  ldap:
+    build: ./ldap
+    container_name: apache-ldap
+    restart: unless-stopped
+    environment:
+      - LDAP_ORGANISATION=${LDAP_ORGANISATION:-drsrv}
+      - LDAP_DOMAIN=${LDAP_DOMAIN:-drsrv.net.ar}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-DC=drsrv,DC=net,DC=ar}
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD:-change-me-now}
+      - LDAP_TLS_CN=${LDAP_TLS_CN:-192.168.1.50}
+      - LDAP_DEFAULT_USER=${LDAP_DEFAULT_USER:-carlo}
+      - LDAP_DEFAULT_PASSWORD=${LDAP_DEFAULT_PASSWORD:-}
+    ports:
+      - "${LDAP_PORT:-389}:389"
+      - "${LDAPS_PORT:-636}:636"
+    volumes:
+      - ldap_data:/var/lib/openldap/openldap-data
+      - ldap_certs:/etc/openldap/certs
     networks:
       - default
 
@@ -95,3 +122,5 @@ services:
 
 volumes:
   postgres_data:
+  ldap_data:
+  ldap_certs:

@@ -11,7 +11,7 @@ RUN apt-get update \
 # PEP 668: install non-Debian Python packages into a virtualenv
 RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-  && /opt/venv/bin/pip install --no-cache-dir web.py waitress ansible "psycopg[binary]"
+  && /opt/venv/bin/pip install --no-cache-dir web.py waitress ansible ldap3 "psycopg[binary]"
 
 # Add ansible binaries to PATH by symlinking to /usr/local/bin
 RUN ln -s /opt/venv/bin/ansible* /usr/local/bin/

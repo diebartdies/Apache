@@ -7,12 +7,14 @@ import mimetypes
 import os
 from pathlib import Path
 import secrets
+import ssl
 import time
 import urllib.parse
 import urllib.request
 import urllib.error
 
 import web
+from ldap3 import Connection, Server, Tls
 from waitress import serve
 
 from disc_sync import is_database_configured, sync_discs
@@ -173,6 +175,76 @@ def _oidc_scopes() -> str:
     return os.environ.get("OIDC_SCOPES", "openid profile email").strip() or "openid profile email"
 
 
+def _ldap_enabled() -> bool:
+    return bool(
+        os.environ.get("LDAP_SERVER_URL", "").strip()
+        and os.environ.get("LDAP_BASE_DN", "").strip()
+    )
+
+
+def _auth_enabled() -> bool:
+    return _ldap_enabled() or _oidc_enabled()
+
+
+def _base_dn_to_domain(base_dn: str) -> str:
+    parts = []
+    for piece in base_dn.split(","):
+        clean = piece.strip()
+        if clean.lower().startswith("dc="):
+            parts.append(clean.split("=", 1)[1])
+    return ".".join(parts)
+
+
+def _ldap_bind_user(username: str) -> str:
+    candidate = username.strip()
+    if "@" in candidate:
+        return candidate
+
+    upn_domain = os.environ.get("LDAP_UPN_DOMAIN", "").strip()
+    if not upn_domain:
+        upn_domain = _base_dn_to_domain(os.environ.get("LDAP_BASE_DN", "").strip())
+
+    if upn_domain:
+        return f"{candidate}@{upn_domain}"
+    return candidate
+
+
+def _ldap_validate_certs() -> bool:
+    raw = os.environ.get("LDAP_VALIDATE_CERTS", "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _ldap_authenticate(username: str, password: str) -> tuple[bool, str, dict]:
+    server_url = os.environ.get("LDAP_SERVER_URL", "").strip()
+    if not server_url:
+        return False, "LDAP server is not configured.", {}
+
+    if not username or not password:
+        return False, "Username and password are required.", {}
+
+    use_ssl = server_url.lower().startswith("ldaps://")
+    ca_file = os.environ.get("LDAP_CA_CERT_FILE", "").strip()
+    tls = None
+    if use_ssl:
+        tls = Tls(
+            validate=ssl.CERT_REQUIRED if _ldap_validate_certs() else ssl.CERT_NONE,
+            ca_certs_file=ca_file or None,
+        )
+
+    try:
+        server = Server(server_url, use_ssl=use_ssl, tls=tls, connect_timeout=8)
+        bind_user = _ldap_bind_user(username)
+        with Connection(server, user=bind_user, password=password, auto_bind=True, receive_timeout=8):
+            return True, "", {
+                "name": username,
+                "preferred_username": bind_user,
+                "email": bind_user if "@" in bind_user else "",
+                "sub": bind_user,
+            }
+    except Exception:
+        return False, "Invalid LDAP credentials or LDAP server unavailable.", {}
+
+
 def _is_authenticated() -> bool:
     return bool(session.get("user"))
 
@@ -221,7 +293,7 @@ def _http_get_json(url: str, headers: dict[str, str]) -> dict:
 
 
 def _require_authentication(next_path: str = "/"):
-    if not _oidc_enabled():
+    if not _auth_enabled():
         return
     if _is_authenticated():
         return
@@ -257,7 +329,7 @@ def page(title: str, body: str) -> str:
     signed_in = _is_authenticated()
     whoami = web.websafe(_current_user_display_name()) if signed_in else ""
     auth_nav = ""
-    if _oidc_enabled():
+    if _auth_enabled():
         if signed_in:
             auth_nav = f'<span style="margin-right:12px; color: var(--soft-ink);">{whoami}</span><a href="/logout">Logout</a>'
         else:
@@ -598,11 +670,27 @@ class SyncDiscs:
 
 class Login:
     def GET(self):
-        if not _oidc_enabled():
-            return page("Login", "<p>SSO is not configured. Set OIDC_* environment variables.</p>")
+        if not _auth_enabled():
+            return page("Login", "<p>Authentication is not configured. Set LDAP_* or OIDC_* environment variables.</p>")
 
         if _is_authenticated():
             raise web.seeother("/")
+
+        if _ldap_enabled():
+            req = web.input(next="")
+            next_path = (req.next or "").strip()
+            if next_path.startswith("/"):
+                session["post_login_redirect"] = next_path
+
+            body = (
+                "<h2>Login</h2>"
+                "<form method=\"post\" action=\"/login\" style=\"max-width:420px;\">"
+                "<p><label>Username<br /><input name=\"username\" autocomplete=\"username\" required style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;\" /></label></p>"
+                "<p><label>Password<br /><input type=\"password\" name=\"password\" autocomplete=\"current-password\" required style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;\" /></label></p>"
+                "<p><button type=\"submit\" style=\"padding:10px 14px;border-radius:8px;border:none;background:#000;color:#fff;font-weight:700;\">Sign in</button></p>"
+                "</form>"
+            )
+            return page("Login", body)
 
         state = secrets.token_urlsafe(24)
         nonce = secrets.token_urlsafe(24)
@@ -625,6 +713,32 @@ class Login:
             "nonce": nonce,
         }
         raise web.seeother(f"{endpoints['authorize']}?{urllib.parse.urlencode(params)}")
+
+    def POST(self):
+        if not _ldap_enabled():
+            raise web.seeother("/login")
+
+        req = web.input(username="", password="")
+        username = (req.username or "").strip()
+        password = req.password or ""
+        ok, message, user = _ldap_authenticate(username, password)
+        if not ok:
+            body = (
+                "<h2>Login</h2>"
+                f"<p style=\"color:#8b0000;\">{web.websafe(message)}</p>"
+                "<form method=\"post\" action=\"/login\" style=\"max-width:420px;\">"
+                f"<p><label>Username<br /><input name=\"username\" value=\"{web.websafe(username)}\" autocomplete=\"username\" required style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;\" /></label></p>"
+                "<p><label>Password<br /><input type=\"password\" name=\"password\" autocomplete=\"current-password\" required style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;\" /></label></p>"
+                "<p><button type=\"submit\" style=\"padding:10px 14px;border-radius:8px;border:none;background:#000;color:#fff;font-weight:700;\">Sign in</button></p>"
+                "</form>"
+            )
+            return page("Login", body)
+
+        session["user"] = user
+        redirect_target = session.pop("post_login_redirect", "/")
+        if not isinstance(redirect_target, str) or not redirect_target.startswith("/"):
+            redirect_target = "/"
+        raise web.seeother(redirect_target)
 
 
 class AuthCallback:
