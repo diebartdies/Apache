@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: musicstore-ingress
+  namespace: musicstore
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    # Replace with your ACM certificate ARN in the same AWS region as EKS
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:sa-east-1:123456789012:certificate/replace-me
+spec:
+  ingressClassName: alb
+  rules:
+    - host: musicstore.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: musicstore-apache
+                port:
+                  number: 80

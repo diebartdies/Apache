@@ -1,0 +1,36 @@
+# terraform.tfvars.example
+# Copy this file to terraform.tfvars and fill in real values.
+# Do NOT commit terraform.tfvars to source control.
+
+aws_region  = "sa-east-1"
+environment = "prod"
+app_name    = "musicstore"
+
+# Networking
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]
+
+# RDS — PostgreSQL 16
+db_name           = "musicstore"
+db_username       = "musicstore"
+db_password       = "CHANGE_ME_USE_A_STRONG_PASSWORD"
+db_instance_class = "db.t3.micro"
+
+# ECS / Fargate
+apache_cpu           = 512
+apache_memory        = 1024
+apache_desired_count = 1
+
+# HTTPS — set your ACM certificate ARN to enable HTTPS on the ALB
+# acm_certificate_arn = "arn:aws:acm:sa-east-1:123456789012:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+acm_certificate_arn = ""
+
+# S3 albums bucket (leave blank to auto-name)
+# albums_bucket_name = "my-musicstore-albums"
+albums_bucket_name = ""
+
+# EasyDNS (optional)
+easydns_hostname = ""
+easydns_username = ""
+easydns_password = ""

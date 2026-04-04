@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: musicstore-app-config
+  namespace: musicstore
+data:
+  ALBUMS_DIR: /opt/albums
+  POSTGRES_HOST: musicstore-postgres
+  POSTGRES_PORT: "5432"
+  SYNC_DISCS_ON_STARTUP: "1"
+  EASYDNS_HOSTNAME: ""
+  EASYDNS_USERNAME: ""
+  EASYDNS_PASSWORD: ""
+  EASYDNS_SERVER: ""
+  EASYDNS_INTERVAL_SECONDS: "300"

@@ -1,0 +1,137 @@
+services:
+  apache:
+    build: .
+    container_name: apache-httpd
+    restart: unless-stopped
+    environment:
+      - ALBUMS_DIR=/opt/albums
+      - SPOTIFY_DATA_DIR=/opt/spotify-data
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=musicstore
+      - POSTGRES_USER=musicstore
+      - POSTGRES_PASSWORD=Palo1010
+      - MEDIA_SIGNING_KEY=${MEDIA_SIGNING_KEY:-change-this-prod-secret}
+      - MEDIA_URL_TTL_SECONDS=${MEDIA_URL_TTL_SECONDS:-300}
+      - SYNC_DISCS_ON_STARTUP=${SYNC_DISCS_ON_STARTUP:-1}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_CURRENCY=${STRIPE_CURRENCY:-usd}
+      - MERCADOPAGO_ACCESS_TOKEN=${MERCADOPAGO_ACCESS_TOKEN:-}
+      - MERCADOPAGO_CURRENCY=${MERCADOPAGO_CURRENCY:-USD}
+      # Comma-separated usernames/emails that get admin nav links (Spotify, Sync)
+      - ADMIN_USERS=${ADMIN_USERS:-}
+      # Optional: LDAP auth
+      - LDAP_SERVER_URL=${LDAP_SERVER_URL:-}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-}
+      - LDAP_UPN_DOMAIN=${LDAP_UPN_DOMAIN:-}
+      - LDAP_VALIDATE_CERTS=${LDAP_VALIDATE_CERTS:-0}
+      - LDAP_CA_CERT_FILE=${LDAP_CA_CERT_FILE:-}
+      # Optional: Microsoft Entra ID / OIDC SSO
+      - OIDC_TENANT_ID=${OIDC_TENANT_ID:-}
+      - OIDC_AUTHORITY=${OIDC_AUTHORITY:-}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI:-}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - OIDC_USERINFO_ENDPOINT=${OIDC_USERINFO_ENDPOINT:-https://graph.microsoft.com/oidc/userinfo}
+      # Optional: EasyDNS Dynamic DNS (ddclient). Leave empty to disable.
+      - EASYDNS_HOSTNAME=${EASYDNS_HOSTNAME:-}
+      - EASYDNS_USERNAME=${EASYDNS_USERNAME:-}
+      - EASYDNS_PASSWORD=${EASYDNS_PASSWORD:-}
+      # Optional tuning
+      - EASYDNS_SERVER=${EASYDNS_SERVER:-}
+      - EASYDNS_INTERVAL_SECONDS=${EASYDNS_INTERVAL_SECONDS:-300}
+    volumes:
+      # Host path to albums is configurable because Docker Desktop/WSL can be picky
+      # about direct UNC mounts. Set ALBUMS_HOST_PATH to either:
+      # - a mapped drive (recommended):  Z:/
+      # - a local folder:               D:/some/folder
+      # - or (if supported) a UNC path: //Drgift/eti/ØrMet
+      - "${ALBUMS_HOST_PATH:-./albums}:/opt/albums:ro"
+      - "${SPOTIFY_HOST_PATH:-./spotify-data}:/opt/spotify-data:ro"
+      # Live mount webapp folder for development (auto-reload on file changes)
+      - "./webapp:/opt/webapp:rw"
+    ports:
+      - "${APACHE_PORT:-8585}:80"
+    depends_on:
+      - postgres
+    networks:
+      - default
+
+  ldap:
+    build: ./ldap
+    container_name: apache-ldap
+    restart: unless-stopped
+    environment:
+      - LDAP_ORGANISATION=${LDAP_ORGANISATION:-drsrv}
+      - LDAP_DOMAIN=${LDAP_DOMAIN:-drsrv.net.ar}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-DC=drsrv,DC=net,DC=ar}
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD:-change-me-now}
+      - LDAP_TLS_CN=${LDAP_TLS_CN:-192.168.1.50}
+      - LDAP_DEFAULT_USER=${LDAP_DEFAULT_USER:-carlo}
+      - LDAP_DEFAULT_PASSWORD=${LDAP_DEFAULT_PASSWORD:-}
+    ports:
+      - "${LDAP_PORT:-389}:389"
+      - "${LDAPS_PORT:-636}:636"
+    volumes:
+      - ldap_data:/var/lib/openldap/openldap-data
+      - ldap_certs:/etc/openldap/certs
+    networks:
+      - default
+
+  postgres:
+    image: postgres:16
+    container_name: apache-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=musicstore
+      - POSTGRES_USER=musicstore
+      - POSTGRES_PASSWORD=Palo1010
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - default
+
+  nginx:
+    image: nginx:latest
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8081}:80"
+      - "${HTTPS_PORT:-8444}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - apache
+    networks:
+      - default
+
+  ansible:
+    image: docker:27-cli
+    container_name: ansible-control
+    restart: unless-stopped
+    working_dir: /ansible
+    volumes:
+      - ./ansible:/ansible
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${USERPROFILE}/.ssh:/root/.ssh:ro
+    environment:
+      - ANSIBLE_HOST_KEY_CHECKING=False
+      - ANSIBLE_CONFIG=/ansible/ansible.cfg
+    command: sh -c "apk add --no-cache ansible-core openssh-client iputils netcat-openbsd >/dev/null 2>&1; sleep 5; ansible-playbook -i /ansible/inventory.ini /ansible/site.yml; tail -f /dev/null"
+    depends_on:
+      - apache
+    networks:
+      - default
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+volumes:
+  postgres_data:
+  ldap_data:
+  ldap_certs:

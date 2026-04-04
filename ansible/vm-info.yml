@@ -1,0 +1,30 @@
+---
+- name: VM Info (with Apache)
+  hosts: apache
+  gather_facts: yes
+  tasks:
+    - name: Collect system facts
+      debug:
+        msg: |
+          Hostname: {{ ansible_hostname }}
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Kernel: {{ ansible_kernel }}
+          CPU: {{ ansible_processor_vcpus }} vCPU
+          Memory: {{ (ansible_memtotal_mb / 1024) | round(2) }} GB
+          IPs: {{ ansible_all_ipv4_addresses | join(', ') }}
+
+    - name: Check Apache is running
+      command: systemctl status apache2
+      register: apache_status
+      ignore_errors: yes
+
+    - name: Get Apache version
+      command: apache2ctl -v
+      register: apache_version
+      ignore_errors: yes
+
+    - name: Display Apache info
+      debug:
+        msg: |
+          Apache Status: {{ 'running' if apache_status.rc == 0 else 'not running' }}
+          {{ apache_version.stdout | default('Apache version unavailable') }}

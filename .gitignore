@@ -1,0 +1,24 @@
+# Environment / secrets
+.env
+.secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+*.log
+
+# Terraform local cache
+terraform/.terraform/
+
+# Local TLS cert artifacts
+nginx/certs/

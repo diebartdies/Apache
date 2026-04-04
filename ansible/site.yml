@@ -1,0 +1,63 @@
+---
+- name: Apache Status and Version
+  hosts: apache
+  gather_facts: no
+  tasks:
+    - name: Validate Apache configuration
+      command: docker exec {{ apache_container }} httpd -t
+      register: apache_status
+      changed_when: false
+
+    - name: Get Apache version
+      command: docker exec {{ apache_container }} httpd -v
+      register: apache_version
+      changed_when: false
+
+    - name: Display Apache info
+      debug:
+        msg: |
+          Apache Config Test:
+          {{ apache_status.stdout }}
+
+          Apache Version:
+          {{ apache_version.stdout }}
+
+- name: Server Status and Version
+  hosts: myhosts
+  gather_facts: no
+  tasks:
+    - name: Check host reachability
+      ping:
+
+    - name: Get OS version
+      shell: |
+        if [ -f /etc/os-release ]; then
+          grep '^PRETTY_NAME=' /etc/os-release | cut -d= -f2- | tr -d '"'
+        else
+          uname -srv
+        fi
+      register: os_version
+      changed_when: false
+
+    - name: Get kernel version
+      command: uname -r
+      register: kernel_version
+      changed_when: false
+
+    - name: Get server status
+      shell: |
+        if command -v systemctl >/dev/null 2>&1; then
+          systemctl is-system-running || true
+        else
+          uptime
+        fi
+      register: server_status
+      changed_when: false
+
+    - name: Display server info
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }}
+          Status: {{ server_status.stdout }}
+          OS: {{ os_version.stdout }}
+          Kernel: {{ kernel_version.stdout }}

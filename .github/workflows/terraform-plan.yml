@@ -1,0 +1,77 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - terraform/**
+      - .github/workflows/terraform-plan.yml
+  push:
+    branches:
+      - main
+      - apache
+    paths:
+      - terraform/**
+      - .github/workflows/terraform-plan.yml
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: terraform
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Debug - list Terraform files
+        run: |
+          set -euo pipefail
+          pwd
+          ls -la
+          find . -maxdepth 2 -type f -name "*.tf" -print || true
+
+      - name: Terraform Init
+        run: terraform init -input=false
+
+      - name: Terraform Format
+        run: |
+          set +e
+          terraform fmt -check -recursive
+          FMT_EXIT=$?
+          set -e
+
+          # terraform fmt exit semantics:
+          # 0 => already formatted
+          # 3 => files would be reformatted
+          # others => real error
+          if [ "$FMT_EXIT" -eq 0 ]; then
+            echo "Terraform formatting is clean."
+            exit 0
+          fi
+
+          if [ "$FMT_EXIT" -eq 3 ]; then
+            echo "::warning::Terraform files need formatting, but CI will continue."
+            terraform fmt -diff -recursive || true
+            exit 0
+          fi
+
+          echo "terraform fmt failed (exit code: $FMT_EXIT)."
+          exit "$FMT_EXIT"
+
+      - name: Terraform Validate
+        run: terraform validate -no-color
