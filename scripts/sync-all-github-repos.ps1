@@ -90,8 +90,17 @@ function Sync-Repo {
         }
 
         git push origin $branch | Out-Null
-        if ($LASTEXITCODE -ne 0) {
+        $pushExit = $LASTEXITCODE
+
+        if ($pushExit -ne 0) {
+            Write-Log "[$RepoPath] Standard push failed on '$branch' (exit=$pushExit). Trying upstream push..."
             git push -u origin $branch | Out-Null
+            $pushExit = $LASTEXITCODE
+        }
+
+        if ($pushExit -ne 0) {
+            Write-Log "[$RepoPath] Push FAILED to $origin on '$branch' (exit=$pushExit)"
+            return
         }
 
         Write-Log "[$RepoPath] Push completed to $origin"
