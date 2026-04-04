@@ -17,13 +17,61 @@ docker compose up --build
 ## URLs
 
 - Store: [http://localhost:8585/](http://localhost:8585/)
+- Spotify dashboard: [http://localhost:8585/spotify](http://localhost:8585/spotify)
 - CGI store: [http://localhost:8585/cgi-bin/store.py](http://localhost:8585/cgi-bin/store.py)
 - Sync discs to PostgreSQL: [http://localhost:8585/sync-discs](http://localhost:8585/sync-discs)
+
+## Spotify data viewer
+
+The web app can render a dashboard from your Spotify account export JSON files.
+
+1. Set `SPOTIFY_HOST_PATH` in `.env` to your export folder on host.
+2. Start/rebuild: `docker compose up --build -d`
+3. Open `/spotify`.
+
+Example `.env` value on Windows:
+
+- `SPOTIFY_HOST_PATH="D:/spotify/my_spotify_data (2)/Spotify Account Data"`
 
 If OIDC is configured:
 
 - Login: [http://localhost:8585/login](http://localhost:8585/login)
 - Callback: [http://localhost:8585/auth/callback](http://localhost:8585/auth/callback)
+
+## Payments (Stripe + Mercado Pago)
+
+The store can now send buyers to hosted checkout pages.
+
+Supported providers:
+
+- Stripe
+- Mercado Pago
+
+Recommended setup:
+
+- Stripe for global buyers
+- Mercado Pago for Latin America / local payment methods
+
+Environment variables:
+
+- `PUBLIC_BASE_URL` (recommended when accessed through a public host)
+- `STRIPE_SECRET_KEY`
+- `STRIPE_CURRENCY` (default: `usd`)
+- `MERCADOPAGO_ACCESS_TOKEN`
+- `MERCADOPAGO_CURRENCY` (default: `USD`)
+
+Flow:
+
+1. User opens `/buy?id=<product-id>`
+2. User chooses Stripe or Mercado Pago
+3. App redirects to hosted checkout
+4. Provider returns to `/checkout/success` or `/checkout/cancel`
+5. App verifies the payment and shows secure download links
+
+Notes:
+
+- Download links are time-limited using the existing media signing logic.
+- If no provider keys are configured, the payment screen explains what is missing.
 
 ## PostgreSQL defaults
 

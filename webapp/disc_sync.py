@@ -142,6 +142,42 @@ def sync_discs(products: list[dict[str, Any]], albums_dir: str) -> dict[str, int
     return {"albums_synced": album_count, "tracks_synced": track_count}
 
 
+def save_subscriber(name: str, email: str) -> tuple[bool, str]:
+    """Insert a newsletter subscriber into the subscribers table.
+
+    Returns (True, "subscribed") on new signup, (True, "already_subscribed") if the email
+    already exists, or (False, error_message) on failure.
+    """
+    dsn = _database_dsn()
+    if not dsn:
+        return False, "Subscription list is not available right now."
+
+    psycopg = _load_psycopg()
+    try:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS subscribers (
+                        id          BIGSERIAL PRIMARY KEY,
+                        name        TEXT        NOT NULL,
+                        email       TEXT        NOT NULL UNIQUE,
+                        subscribed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    "INSERT INTO subscribers (name, email) VALUES (%s, %s)"
+                    " ON CONFLICT (email) DO NOTHING RETURNING id",
+                    (name.strip(), email.strip().lower()),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return (True, "subscribed") if row else (True, "already_subscribed")
+    except Exception as exc:
+        return False, str(exc)
+
+
 def main() -> None:
     from app import PRODUCTS  # Imported lazily to avoid circular import at module load.
 

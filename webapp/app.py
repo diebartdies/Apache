@@ -17,14 +17,20 @@ import web
 from ldap3 import Connection, Server, Tls
 from waitress import serve
 
-from disc_sync import is_database_configured, sync_discs
+from disc_sync import is_database_configured, sync_discs, save_subscriber
+from payments import configured_providers, create_checkout, verify_checkout
+from spotify_dashboard import build_spotify_dashboard_body
 
 urls = (
     "/", "Index",
+    "/spotify", "Spotify",
     "/buy", "Buy",
+    "/checkout/success", "CheckoutSuccess",
+    "/checkout/cancel", "CheckoutCancel",
     "/album", "Album",
     "/media", "Media",
     "/sync-discs", "SyncDiscs",
+    "/register", "Register",
     "/login", "Login",
     "/auth/callback", "AuthCallback",
     "/logout", "Logout",
@@ -249,6 +255,23 @@ def _is_authenticated() -> bool:
     return bool(session.get("user"))
 
 
+def _is_admin() -> bool:
+    """True when the logged-in user is listed in ADMIN_USERS (comma-separated usernames/emails)."""
+    raw = os.environ.get("ADMIN_USERS", "").strip()
+    if not raw:
+        return False
+    admins = {u.strip().lower() for u in raw.split(",") if u.strip()}
+    user = session.get("user")
+    if not user:
+        return False
+    identifiers = {
+        (user.get("preferred_username") or "").lower(),
+        (user.get("email") or "").lower(),
+        (user.get("name") or "").lower(),
+    }
+    return bool(admins & identifiers)
+
+
 def _current_user_display_name() -> str:
     user = session.get("user")
     if not user:
@@ -301,6 +324,115 @@ def _require_authentication(next_path: str = "/"):
     raise web.seeother("/login")
 
 
+def _current_base_url() -> str:
+    configured = os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if configured:
+        return configured
+
+    scheme = web.ctx.env.get("HTTP_X_FORWARDED_PROTO") or web.ctx.protocol.split(":", 1)[0]
+    host = web.ctx.env.get("HTTP_X_FORWARDED_HOST") or web.ctx.env.get("HTTP_HOST") or web.ctx.host
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _payment_provider_badge(provider_code: str) -> str:
+    if provider_code == "stripe":
+        return "🌍 Stripe"
+    if provider_code == "mercadopago":
+        return "💳 Mercado Pago"
+    return provider_code.title()
+
+
+def _payment_provider_theme(provider_code: str) -> tuple[str, str, str]:
+    if provider_code == "stripe":
+        return ("#635BFF", "#ECEBFF", "Best for international buyers and cards")
+    if provider_code == "mercadopago":
+        return ("#009EE3", "#E8F7FF", "Best for Latin America and local payment methods")
+    return ("#2a82d8", "#EEF6FF", "Hosted checkout")
+
+
+def _preferred_payment_provider() -> str:
+    language = (web.ctx.env.get("HTTP_ACCEPT_LANGUAGE", "") or "").lower()
+    latam_markers = (
+        "es-ar",
+        "es-mx",
+        "es-cl",
+        "es-co",
+        "es-pe",
+        "es-uy",
+        "es-py",
+        "es-ec",
+        "es-bo",
+        "es-ve",
+        "pt-br",
+    )
+    if any(marker in language for marker in latam_markers):
+        return "mercadopago"
+    return "stripe"
+
+
+def _format_payment_amount(amount_total, currency: str, amount_is_minor: bool = False) -> str:
+    if amount_total in (None, ""):
+        return ""
+    try:
+        amount = float(amount_total)
+    except (TypeError, ValueError):
+        return web.websafe(str(amount_total))
+
+    if amount_is_minor:
+        amount = amount / 100.0
+    return web.websafe(f"{currency.upper()} {amount:,.2f}")
+
+
+def _build_purchase_delivery(product: dict) -> str:
+    album_folder = product.get("folder")
+    if not album_folder:
+        return "<p>Your purchase has been confirmed.</p>"
+
+    albums_dir = os.environ.get("ALBUMS_DIR", "").strip()
+    if not albums_dir:
+        return "<p>Payment confirmed, but the album directory is not configured yet.</p>"
+
+    root_path = Path(albums_dir).resolve()
+    album_path = (root_path / album_folder).resolve()
+    if root_path not in album_path.parents and album_path != root_path:
+        return "<p>Payment confirmed, but the album path is invalid.</p>"
+    if not album_path.exists() or not album_path.is_dir():
+        return "<p>Payment confirmed, but the album files were not found.</p>"
+
+    cover_html = ""
+    jpgs = sorted(
+        [p for p in [*album_path.glob("*.jpg"), *album_path.glob("*.jpeg")] if "3000x3000" in p.name.lower()],
+        key=lambda p: p.name.lower(),
+    )
+    if jpgs:
+        src = _build_media_url(album_folder, jpgs[0].name)
+        cover_html = f'<p><img src="{src}" alt="{web.websafe(product["name"])}" width="240" loading="lazy" /></p>'
+
+    wavs = sorted(album_path.glob("*.wav"), key=lambda p: p.name.lower())
+    if not wavs:
+        return cover_html + "<p>Payment confirmed, but there are no downloadable tracks for this album yet.</p>"
+
+    rows = []
+    for wav in wavs:
+        src = _build_media_url(album_folder, wav.name)
+        rows.append(
+            "<li>"
+            f"<div>{web.websafe(wav.name)}</div>"
+            f"<div style=\"margin-top:6px;\"><a href=\"{src}\" download>Download track</a></div>"
+            "</li>"
+        )
+
+    ttl_minutes = max(1, _get_media_url_ttl_seconds() // 60)
+    return (
+        cover_html
+        +
+        f"<p>Your secure download links are ready. They expire in about <strong>{ttl_minutes} minutes</strong>.</p>"
+        "<ul>"
+        + "".join(rows)
+        + "</ul>"
+    )
+
+
 def find_product(product_id: str):
     for product in PRODUCTS:
         if product["id"] == product_id:
@@ -322,18 +454,75 @@ def _is_mobile_request() -> bool:
     return any(token in user_agent for token in mobile_tokens)
 
 
-def page(title: str, body: str) -> str:
+def page(
+    title: str,
+    body: str,
+    show_branding: bool = True,
+    brand_subtitle: str = "Ormet",
+    header_title: str | None = None,
+    show_store_link: bool = True,
+    show_spotify_link: bool = True,
+    show_sync_link: bool = True,
+    extra_css: str = "",
+    extra_nav_links: list[tuple[str, str]] | None = None,
+    extra_nav_select_options: list[tuple[str, str]] | None = None,
+    extra_nav_select_current: str = "",
+    extra_nav_select_label: str = "Choose file",
+) -> str:
     is_mobile = _is_mobile_request()
     device_class = "mobile" if is_mobile else "desktop"
     sync_label = "Sync discs" if is_mobile else "Sync discs to PostgreSQL"
     signed_in = _is_authenticated()
     whoami = web.websafe(_current_user_display_name()) if signed_in else ""
+    header_text = header_title or title
     auth_nav = ""
     if _auth_enabled():
         if signed_in:
             auth_nav = f'<span style="margin-right:12px; color: var(--soft-ink);">{whoami}</span><a href="/logout">Logout</a>'
         else:
             auth_nav = '<a href="/login">Login</a>'
+
+    nav_links = []
+    if show_store_link:
+        nav_links.append('<a href="/">Store</a>')
+    # Spotify and Sync are admin-only — only show to users listed in ADMIN_USERS
+    if show_spotify_link and _is_admin():
+        nav_links.append('<a href="/spotify">Spotify</a>')
+    if show_sync_link and _is_admin():
+        nav_links.append(f'<a href="/sync-discs">{sync_label}</a>')
+    nav_links.append('<a href="/register">Sign up</a>')
+    if extra_nav_links:
+        for label, href in extra_nav_links:
+            nav_links.append(f'<a href="{web.websafe(href)}">{web.websafe(label)}</a>')
+    if extra_nav_select_options:
+        options_html = []
+        for label, href in extra_nav_select_options:
+            selected_attr = " selected" if href == extra_nav_select_current else ""
+            options_html.append(
+                f'<option value="{web.websafe(href)}"{selected_attr}>{web.websafe(label)}</option>'
+            )
+        nav_links.append(
+            '<form style="display:inline-flex;align-items:center;gap:6px;margin-right:12px;" onsubmit="return false;">'
+            f'<label style="font-size:0.85rem;color:var(--soft-ink);">{web.websafe(extra_nav_select_label)}</label>'
+            '<select onchange="if(this.value){window.location=this.value;}" '
+            'style="padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,.2);max-width:240px;">'
+            f'{"".join(options_html)}'
+            '</select>'
+            '</form>'
+        )
+    if auth_nav:
+        nav_links.append(auth_nav)
+    nav_html = "".join(nav_links)
+
+    brand_block = (
+        "<div class=\"brand\">"
+        "<img class=\"logo\" src=\"/ormet.jpeg\" alt=\"Music Store Logo\" />"
+        "<div>"
+        f"<h1>{html.escape(header_text)}</h1>"
+        f"<p style=\"margin: 4px 0 0 0; color: var(--soft-ink); font-size: 0.95rem; font-weight: 500;\">{html.escape(brand_subtitle)}</p>"
+        "</div>"
+        "</div>"
+    ) if show_branding else f"<div><h1>{html.escape(header_text)}</h1></div>"
 
     return f"""<!doctype html>
 <html>
@@ -423,6 +612,14 @@ def page(title: str, body: str) -> str:
       .card:hover .thumb {{ transform: scale(1.05); }}
       .title {{ margin: 12px 0 8px 0; font-weight: 800; font-size: clamp(0.9rem, 4vw, 1.1rem); color: #000000; text-transform: uppercase; word-wrap: break-word; overflow-wrap: break-word; }}
       .meta {{ margin: 0 0 12px 0; color: #1a1a1a; font-size: 1.2rem; font-weight: 700; }}
+    .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }}
+    .kpi {{ background: rgba(255,255,255,0.72); border-radius: 12px; padding: 12px; }}
+    .kpi-label {{ font-size: 0.82rem; color: var(--soft-ink); margin: 0 0 6px 0; }}
+    .kpi-value {{ font-size: 1.35rem; font-weight: 800; margin: 0; color: var(--ink); }}
+    .table-wrap {{ overflow-x: auto; margin: 10px 0 18px 0; }}
+    table.data {{ width: 100%; border-collapse: collapse; background: rgba(255,255,255,0.72); border-radius: 12px; overflow: hidden; }}
+    table.data th, table.data td {{ padding: 10px; text-align: left; border-bottom: 1px solid rgba(0,0,0,0.08); font-size: 0.92rem; }}
+    table.data th {{ background: rgba(15,43,70,0.1); }}
       .actions {{ display: flex; gap: 8px; margin-top: auto; }}
       .actions a {{ flex: 1; padding: 10px 12px; background: #000000; color: #ffffff; text-decoration: none; font-weight: 700; border-radius: 8px; text-align: center; transition: all 0.2s ease; font-size: 0.95rem; }}
       .actions a:hover {{ background: #333333; transform: scale(1.05); box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3); }}
@@ -438,22 +635,15 @@ def page(title: str, body: str) -> str:
             body.mobile .actions {{ flex-direction: column; }}
             body.mobile .actions a {{ width: 100%; }}
             body.mobile .nav a {{ margin-right: 10px; font-size: 0.9rem; }}
+                        {extra_css}
     </style>
   </head>
     <body class="{device_class}">
     <main class="page">
       <header class="hero">
-        <div class="brand">
-          <img class="logo" src="/ormet.jpeg" alt="Music Store Logo" />
-          <div>
-            <h1>{html.escape(title)}</h1>
-            <p style="margin: 4px 0 0 0; color: var(--soft-ink); font-size: 0.95rem; font-weight: 500;">Ormet</p>
-          </div>
-        </div>
+                {brand_block}
         <nav class="nav" aria-label="Main">
-          <a href="/">Store</a>
-                    <a href="/sync-discs">{sync_label}</a>
-                    {auth_nav}
+                    {nav_html}
         </nav>
       </header>
       <section class="content">{body}</section>
@@ -546,19 +736,146 @@ class Album:
 
 class Buy:
     def GET(self):
-        _require_authentication(next_path=web.ctx.fullpath)
-        user_input_id = web.input(id="").id
+        req = web.input(id="", provider="")
+        user_input_id = req.id
+        provider = (req.provider or "").strip().lower()
         product = find_product(user_input_id)
         if not product:
             return page("Purchase", "<p>Unknown product.</p>")
 
+        if provider:
+            # Only require login when the user has chosen a payment method and is about to check out
+            _require_authentication(next_path=web.ctx.fullpath)
+            buyer_ref = (
+                (session.get("user") or {}).get("email")
+                or (session.get("user") or {}).get("preferred_username")
+                or (session.get("user") or {}).get("name")
+                or ""
+            )
+            checkout_url, error_message = create_checkout(provider, product, _current_base_url(), buyer_ref=buyer_ref)
+            if error_message:
+                body = (
+                    f"<p>Could not start checkout for <strong>{web.websafe(product['name'])}</strong>.</p>"
+                    f"<p>{web.websafe(error_message)}</p>"
+                    f"<p><a href=\"/buy?id={web.websafe(product['id'])}\">Back to payment options</a></p>"
+                )
+                return page("Purchase", body)
+            raise web.seeother(checkout_url)
+
+        providers = configured_providers()
+        if not providers:
+            body = (
+                f"<p><strong>{web.websafe(product['name'])}</strong></p>"
+                "<p>Online purchases are not available yet — please check back soon or contact us to arrange a purchase.</p>"
+                f"<p><a href=\"/\">Back to store</a></p>"
+            )
+            return page("Purchase", body)
+
         safe_name = web.websafe(product["name"])
         safe_price = web.websafe(f"${product['price']:.2f}")
+        preferred_provider = _preferred_payment_provider()
+        providers = sorted(
+            providers,
+            key=lambda item: (0 if item["code"] == preferred_provider else 1, item["name"].lower()),
+        )
+        options = []
+        for item in providers:
+            accent, tint, fallback_note = _payment_provider_theme(item["code"])
+            href = f"/buy?id={urllib.parse.quote(product['id'], safe='')}&provider={urllib.parse.quote(item['code'], safe='')}"
+            recommended = item["code"] == preferred_provider
+            recommended_badge = (
+                '<div style="display:inline-block;margin-bottom:10px;padding:4px 10px;border-radius:999px;background:#111;color:#fff;font-size:0.72rem;font-weight:800;letter-spacing:.04em;">Recommended</div>'
+                if recommended
+                else ""
+            )
+            options.append(
+                "<div class=\"card\" style=\"min-height:0;background:#fff;border:2px solid rgba(0,0,0,.08);box-shadow:0 10px 24px rgba(0,0,0,.12);\">"
+                f"{recommended_badge}"
+                f"<div style=\"display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;\">"
+                f"<div class=\"title\" style=\"margin:0;color:{accent};\">{web.websafe(_payment_provider_badge(item['code']))}</div>"
+                f"<div style=\"padding:6px 10px;border-radius:999px;background:{tint};color:{accent};font-weight:800;font-size:.78rem;\">Secure checkout</div>"
+                "</div>"
+                f"<div class=\"meta\" style=\"font-size:1rem;margin-bottom:8px;\">{web.websafe(item['description'])}</div>"
+                f"<p style=\"margin:0 0 14px 0;color:#334;line-height:1.45;font-size:.95rem;\">{web.websafe(fallback_note)}</p>"
+                "<div class=\"actions\">"
+                f"<a href=\"{href}\" style=\"background:{accent};\">Continue with {web.websafe(item['name'])}</a>"
+                "</div>"
+                "</div>"
+            )
+
         body = (
-            f"<p>Order received for <strong>{safe_name}</strong> ({safe_price}).</p>"
-            "<p>This is a demo checkout (no payment processing).</p>"
+            f"<p>Select how you want to pay for <strong>{safe_name}</strong> ({safe_price}).</p>"
+            "<p style=\"margin-top:-2px;color:#24384e;\">You can offer both gateways and let the buyer choose the most convenient option.</p>"
+            "<div class=\"grid\">"
+            + "".join(options)
+            + "</div>"
         )
         return page("Purchase", body)
+
+
+class CheckoutSuccess:
+    def GET(self):
+        req = web.input(id="", provider="")
+        provider = (req.provider or "").strip().lower()
+        expected_product_id = (req.id or "").strip()
+        ok, message, details = verify_checkout(provider, dict(req), expected_product_id=expected_product_id)
+        if not ok:
+            body = (
+                "<p>We could not confirm your payment yet.</p>"
+                f"<p>{web.websafe(message)}</p>"
+                f"<p><a href=\"/buy?id={web.websafe(expected_product_id)}\">Try checkout again</a></p>"
+            )
+            return page("Payment status", body)
+
+        product_id = details.get("product_id") or expected_product_id
+        product = PRODUCT_BY_ID.get(product_id)
+        if not product:
+            return page("Payment status", "<p>Payment confirmed, but the product could not be resolved.</p>")
+
+        payment_rows = [
+            ("Provider", details.get("provider_name") or provider.title()),
+            ("Payment ID", str(details.get("payment_id") or "")),
+            ("Status", str(details.get("status") or "")),
+        ]
+        if details.get("buyer"):
+            payment_rows.append(("Buyer", str(details.get("buyer"))))
+        if details.get("amount_total") not in (None, ""):
+            payment_rows.append((
+                "Amount",
+                _format_payment_amount(
+                    details.get("amount_total"),
+                    str(details.get("currency") or ""),
+                    bool(details.get("amount_is_minor")),
+                ),
+            ))
+
+        table_rows = "".join(
+            f"<tr><th>{web.websafe(label)}</th><td>{value if label == 'Amount' else web.websafe(value)}</td></tr>"
+            for label, value in payment_rows
+        )
+        delivery_html = _build_purchase_delivery(product)
+        body = (
+            f"<p>Payment confirmed for <strong>{web.websafe(product['name'])}</strong>.</p>"
+            "<div class=\"table-wrap\"><table class=\"data\">"
+            f"{table_rows}"
+            "</table></div>"
+            f"{delivery_html}"
+        )
+        return page("Payment successful", body)
+
+
+class CheckoutCancel:
+    def GET(self):
+        req = web.input(id="", provider="")
+        product = PRODUCT_BY_ID.get((req.id or "").strip())
+        product_name = web.websafe(product["name"]) if product else "this item"
+        retry_link = f'/buy?id={web.websafe(product["id"])}' if product else "/"
+        provider_name = _payment_provider_badge((req.provider or "").strip().lower()) if req.provider else "checkout"
+        body = (
+            f"<p>{web.websafe(provider_name)} checkout was cancelled for <strong>{product_name}</strong>.</p>"
+            f"<p><a href=\"{retry_link}\">Choose another payment option</a></p>"
+        )
+        return page("Checkout cancelled", body)
 
 
 class Media:
@@ -668,6 +985,96 @@ class SyncDiscs:
         return page("Sync discs", body)
 
 
+class Spotify:
+    def GET(self):
+        selected_file = (web.input(file="").file or "").strip()
+        title, body, file_menu = build_spotify_dashboard_body(selected_file=selected_file)
+        selected_href = "/spotify"
+        if selected_file:
+            selected_href = f"/spotify?file={urllib.parse.quote(selected_file, safe='')}"
+
+        menu_links = file_menu
+        menu_select = None
+        # If there are many files, use a rolling dropdown to keep navigation compact.
+        if len(file_menu) > 10:
+            menu_links = []
+            menu_select = file_menu
+
+        spotify_bg = (
+            "body {"
+            "background-image: url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Crect width='140' height='140' fill='%23121212'/%3E%3Ccircle cx='70' cy='70' r='48' fill='%231DB954'/%3E%3Cpath d='M41 58c19-6 39-4 57 6' stroke='%23121212' stroke-width='6' stroke-linecap='round' fill='none'/%3E%3Cpath d='M46 73c15-4 31-3 45 4' stroke='%23121212' stroke-width='5' stroke-linecap='round' fill='none'/%3E%3Cpath d='M51 86c12-3 23-2 33 3' stroke='%23121212' stroke-width='4' stroke-linecap='round' fill='none'/%3E%3C/svg%3E\");"
+            "background-repeat: repeat;"
+            "background-size: 140px 140px;"
+            "background-attachment: fixed;"
+            "}"
+        )
+        return page(
+            title,
+            body,
+            show_branding=False,
+            header_title="Spotify Info",
+            show_store_link=False,
+            show_spotify_link=False,
+            show_sync_link=False,
+            extra_css=spotify_bg,
+            extra_nav_links=menu_links,
+            extra_nav_select_options=menu_select,
+            extra_nav_select_current=selected_href,
+            extra_nav_select_label="Spotify file",
+        )
+
+
+class Register:
+    def GET(self):
+        req = web.input(done="")
+        if req.done:
+            body = (
+                "<p style=\"font-size:1.3rem;\">✅ You're on the list!</p>"
+                "<p>Thanks for signing up — we'll send you news about new releases and exclusive offers.</p>"
+                "<p><a href=\"/\">Back to store</a></p>"
+            )
+            return page("Mailing list", body)
+
+        body = (
+            "<h2>Stay in the loop</h2>"
+            "<p>Sign up to hear about new releases, exclusive offers, and updates from Ormet.</p>"
+            "<form method=\"post\" action=\"/register\" style=\"max-width:440px;\">"
+            "<p><label style=\"font-weight:600;\">Name<br />"
+            "<input name=\"name\" autocomplete=\"name\" required placeholder=\"Your name\""
+            " style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;margin-top:4px;\" /></label></p>"
+            "<p><label style=\"font-weight:600;\">Email<br />"
+            "<input type=\"email\" name=\"email\" autocomplete=\"email\" required placeholder=\"you@example.com\""
+            " style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;margin-top:4px;\" /></label></p>"
+            "<p><button type=\"submit\" style=\"padding:11px 28px;border-radius:8px;border:none;"
+            "background:#000;color:#fff;font-weight:700;font-size:1rem;cursor:pointer;\">Subscribe</button></p>"
+            "<p style=\"font-size:0.82rem;color:#555;\">No spam. Unsubscribe any time.</p>"
+            "</form>"
+        )
+        return page("Mailing list", body)
+
+    def POST(self):
+        req = web.input(name="", email="")
+        name = (req.name or "").strip()
+        email = (req.email or "").strip().lower()
+
+        if not name or not email or "@" not in email or "." not in email.split("@")[-1]:
+            body = (
+                "<p style=\"color:#8b0000;\">Please enter a valid name and email address.</p>"
+                "<p><a href=\"/register\">Back</a></p>"
+            )
+            return page("Mailing list", body)
+
+        ok, status = save_subscriber(name, email)
+        if not ok:
+            body = (
+                "<p style=\"color:#8b0000;\">Sorry, we could not save your subscription right now. Please try again later.</p>"
+                "<p><a href=\"/register\">Try again</a></p>"
+            )
+            return page("Mailing list", body)
+
+        raise web.seeother("/register?done=1")
+
+
 class Login:
     def GET(self):
         if not _auth_enabled():
@@ -689,6 +1096,9 @@ class Login:
                 "<p><label>Password<br /><input type=\"password\" name=\"password\" autocomplete=\"current-password\" required style=\"width:100%;padding:10px;border-radius:8px;border:1px solid #b5b5b5;\" /></label></p>"
                 "<p><button type=\"submit\" style=\"padding:10px 14px;border-radius:8px;border:none;background:#000;color:#fff;font-weight:700;\">Sign in</button></p>"
                 "</form>"
+                "<p style=\"margin-top:18px;font-size:0.92rem;\">Just browsing? "
+                "<a href=\"/register\" style=\"font-weight:700;\">Sign up to our mailing list</a> "
+                "to get news about new releases.</p>"
             )
             return page("Login", body)
 
