@@ -38,6 +38,13 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Debug - list Terraform files
+        run: |
+          set -euo pipefail
+          pwd
+          ls -la
+          find . -maxdepth 2 -type f -name "*.tf" -print || true
+
       - name: Terraform Init
         run: terraform init -input=false
 
