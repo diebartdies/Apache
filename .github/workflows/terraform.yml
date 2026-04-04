@@ -32,8 +32,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Verify Docker is available
-        run: docker version
+      - name: Start Docker daemon
+        run: |
+          if ! docker ps > /dev/null 2>&1; then
+            echo "Docker daemon not running, attempting to start..."
+            sudo service docker start 2>/dev/null || sudo dockerd &
+            sleep 2
+          fi
+          docker version
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
