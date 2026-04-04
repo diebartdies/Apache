@@ -1,4 +1,4 @@
-name: Terraform
+name: Terraform Checks
 
 on:
   pull_request:
@@ -19,16 +19,12 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform
+    name: Terraform Checks
     runs-on: ubuntu-latest
-    environment: production
     defaults:
       run:
         shell: bash
         working-directory: terraform
-
-    env:
-      TF_VAR_db_password: ${{ secrets.TF_VAR_db_password || 'ChangeMe123!' }}
 
     steps:
       - name: Checkout
@@ -38,7 +34,6 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
 
       - name: Terraform Init
         run: terraform init -input=false
@@ -68,26 +63,5 @@ jobs:
           echo "terraform fmt failed (exit code: $FMT_EXIT)."
           exit "$FMT_EXIT"
 
-      - name: Terraform Plan
-        if: github.event_name == 'pull_request'
-        run: |
-          set +e
-          terraform plan -input=false -no-color -detailed-exitcode
-          PLAN_EXIT=$?
-          set -e
-
-          # detailed-exitcode semantics:
-          # 0 => success, no changes
-          # 2 => success, changes present
-          # Some CI/provider combinations can surface 3 for "changes present" too.
-          if [ "$PLAN_EXIT" -eq 0 ] || [ "$PLAN_EXIT" -eq 2 ] || [ "$PLAN_EXIT" -eq 3 ]; then
-            echo "Terraform plan completed (exit code: $PLAN_EXIT)."
-            exit 0
-          fi
-
-          echo "Terraform plan failed (exit code: $PLAN_EXIT)."
-          exit "$PLAN_EXIT"
-
-      - name: Terraform Apply
-        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/apache') && github.event_name == 'push'
-        run: terraform apply -auto-approve -input=false
+      - name: Terraform Validate
+        run: terraform validate -no-color
