@@ -80,6 +80,55 @@ function Remove-AdditionalSyncProcesses {
     }
 }
 
+function Test-SyncSafety {
+    param([string]$RepoPath)
+
+    # Anything staged for deletion?
+    $deletedPaths = @(git diff --cached --name-only --diff-filter=D)
+    if (-not $deletedPaths) {
+        return $true
+    }
+
+    $criticalPaths = @(
+        "compose.yaml",
+        "Dockerfile",
+        "nginx/nginx.conf",
+        "scripts/repo-sync-config.json",
+        "scripts/sync-all-github-repos.ps1",
+        "webapp/app.py",
+        ".github/workflows/terraform.yml",
+        ".github/workflows/pullApache.yml"
+    )
+
+    $criticalDeleted = @()
+    foreach ($path in $deletedPaths) {
+        if (
+            $criticalPaths -contains $path -or
+            $path -like "webapp/*" -or
+            $path -like "albums/*"
+        ) {
+            $criticalDeleted += $path
+        }
+    }
+
+    if ($criticalDeleted.Count -gt 0) {
+        Write-Log "[$RepoPath] SAFETY STOP: critical files/folders are staged for deletion."
+        foreach ($p in $criticalDeleted) {
+            Write-Log "[$RepoPath]   DELETE BLOCKED: $p"
+        }
+        git reset | Out-Null
+        return $false
+    }
+
+    if ($deletedPaths.Count -ge 10) {
+        Write-Log "[$RepoPath] SAFETY STOP: $($deletedPaths.Count) deletions detected (possible bad sync state)."
+        git reset | Out-Null
+        return $false
+    }
+
+    return $true
+}
+
 function Sync-Repo {
     param([string]$RepoPath)
 
@@ -110,6 +159,11 @@ function Sync-Repo {
         }
 
         git add -A
+
+        if (-not (Test-SyncSafety -RepoPath $RepoPath)) {
+            Write-Log "[$RepoPath] Sync skipped due to safety guard."
+            return
+        }
 
         git diff --cached --quiet
         $hasChanges = ($LASTEXITCODE -ne 0)
