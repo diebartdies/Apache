@@ -1,0 +1,23 @@
+# Secrets and local env
+.env
+.env.*
+
+# Local TLS certs
+nginx/certs/
+
+# Terraform local state and providers
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Python caches and virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,19 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Spotify dashboard",
+			"type": "node-terminal",
+			"request": "launch",
+			"command": "powershell -NoProfile -Command \"Start-Process 'http://localhost:8585/spotify'\"",
+			"preLaunchTask": "Restart Apache container"
+		},
+		{
+			"name": "Rebuild and open Spotify",
+			"type": "node-terminal",
+			"request": "launch",
+			"command": "powershell -NoProfile -Command \"Start-Process 'http://localhost:8585/spotify'\"",
+			"preLaunchTask": "Rebuild Apache containers"
+		}
+	]
+}

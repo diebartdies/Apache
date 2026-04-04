@@ -1,0 +1,53 @@
+{
+    "serverpulse.services": [
+        {
+            "name": "apache (docker)",
+            "type": "docker",
+            "port": 8585,
+            "useDocker": {
+                "pathToComposeFile": {
+                    "$mid": 1,
+                    "fsPath": "d:\\Apache\\compose.yaml",
+                    "_sep": 1,
+                    "external": "file:///d%3A/Apache/compose.yaml",
+                    "path": "/d:/Apache/compose.yaml",
+                    "scheme": "file"
+                },
+                "selectedContainerName": "apache-httpd",
+                "serviceName": "apache"
+            },
+            "healthCheckPath": "",
+            "enableHealthCheck": true,
+            "healthCheckInterval": 3500000
+        }
+    ],
+    "serverpulse.ai.optInShown": true,
+    "serverpulse.ai.enabled": true,
+    "files.watcherExclude": {
+        "**/.git/**": true,
+        "**/.venv/**": true,
+        "**/__pycache__/**": true,
+        "**/terraform/.terraform/**": true,
+        "**/albums/**": true,
+        "**/node_modules/**": true
+    },
+    "search.exclude": {
+        "**/.git": true,
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/terraform/.terraform": true,
+        "**/albums": true,
+        "**/node_modules": true
+    },
+    "files.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/terraform/.terraform": true
+    },
+    "python.analysis.exclude": [
+        "**/.venv/**",
+        "**/__pycache__/**",
+        "**/terraform/.terraform/**",
+        "**/albums/**"
+    ]
+}
