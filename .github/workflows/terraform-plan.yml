@@ -48,7 +48,23 @@ jobs:
 
       - name: Terraform Plan
         if: github.event_name == 'pull_request'
-        run: terraform plan -input=false -no-color
+        run: |
+          set +e
+          terraform plan -input=false -no-color -detailed-exitcode
+          PLAN_EXIT=$?
+          set -e
+
+          # detailed-exitcode semantics:
+          # 0 => success, no changes
+          # 2 => success, changes present
+          # Some CI/provider combinations can surface 3 for "changes present" too.
+          if [ "$PLAN_EXIT" -eq 0 ] || [ "$PLAN_EXIT" -eq 2 ] || [ "$PLAN_EXIT" -eq 3 ]; then
+            echo "Terraform plan completed (exit code: $PLAN_EXIT)."
+            exit 0
+          fi
+
+          echo "Terraform plan failed (exit code: $PLAN_EXIT)."
+          exit "$PLAN_EXIT"
 
       - name: Terraform Apply
         if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/apache') && github.event_name == 'push'
