@@ -18,6 +18,9 @@ __pycache__/
 .venv/
 venv/
 
+# Local media library (kept outside git backups)
+albums/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
