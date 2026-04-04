@@ -6,8 +6,12 @@ $ErrorActionPreference = "Stop"
 
 $logDir = Join-Path $env:ProgramData "RepoSync"
 $logFile = Join-Path $logDir "sync-all.log"
-$mutexName = "Global\GitHubAutoSyncAllReposMutex"
+$mutexNames = @(
+    "Global\GitHubAutoSyncAllReposMutex",
+    "Local\GitHubAutoSyncAllReposMutex"
+)
 $mutex = $null
+$ownsMutex = $false
 
 if (-not (Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -100,13 +104,34 @@ function Sync-Repo {
     }
 }
 
+function Acquire-ScriptMutex {
+    foreach ($name in $mutexNames) {
+        try {
+            $createdNew = $false
+            $candidate = [System.Threading.Mutex]::new($true, $name, [ref]$createdNew)
+            return @{
+                Mutex = $candidate
+                CreatedNew = $createdNew
+                Name = $name
+            }
+        }
+        catch [System.UnauthorizedAccessException] {
+            Write-Log "Mutex '$name' unavailable: $($_.Exception.Message)"
+        }
+    }
+
+    throw "Could not acquire a process mutex for repo sync."
+}
+
 try {
-    $createdNew = $false
-    $mutex = [System.Threading.Mutex]::new($true, $mutexName, [ref]$createdNew)
-    if (-not $createdNew) {
+    $mutexResult = Acquire-ScriptMutex
+    $mutex = $mutexResult.Mutex
+    $ownsMutex = $true
+    if (-not $mutexResult.CreatedNew) {
         Write-Log "Another sync instance is already running; exiting."
         exit 0
     }
+    Write-Log "Using mutex '$($mutexResult.Name)'"
 
     Remove-AdditionalSyncProcesses -CurrentPid $PID
 
@@ -131,7 +156,7 @@ catch {
     exit 1
 }
 finally {
-    if ($mutex) {
+    if ($mutex -and $ownsMutex) {
         try {
             $mutex.ReleaseMutex() | Out-Null
         }
