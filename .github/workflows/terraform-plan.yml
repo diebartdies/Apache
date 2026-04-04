@@ -1,4 +1,4 @@
-name: Terraform Checks
+name: Terraform
 
 on:
   pull_request:
@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   terraform:
-    name: Terraform Checks
+    name: Terraform
     runs-on: ubuntu-latest
     defaults:
       run:

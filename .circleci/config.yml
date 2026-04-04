@@ -1,0 +1,16 @@
+version: 2.1
+
+jobs:
+  noop:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: CircleCI noop
+          command: echo "CircleCI configured. No-op job passed."
+
+workflows:
+  main:
+    jobs:
+      - noop
