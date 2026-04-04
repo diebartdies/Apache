@@ -57,7 +57,7 @@ variable "db_password" {
   description = "PostgreSQL master password (use AWS Secrets Manager in production)"
   type        = string
   sensitive   = true
-  default     = ""  # Set via TF_VAR_db_password or terraform.tfvars
+  default     = "" # Set via TF_VAR_db_password or terraform.tfvars
 }
 
 variable "db_instance_class" {
@@ -102,7 +102,7 @@ variable "acm_certificate_arn" {
 variable "albums_bucket_name" {
   description = "S3 bucket name for album files (must be globally unique)"
   type        = string
-  default     = ""  # defaults to "<app_name>-albums-<account_id>"
+  default     = "" # defaults to "<app_name>-albums-<account_id>"
 }
 
 # ----------------------------------------------------------

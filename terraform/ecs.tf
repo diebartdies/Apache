@@ -43,16 +43,16 @@ resource "aws_ecs_task_definition" "apache" {
       ]
 
       environment = [
-        { name = "ALBUMS_DIR",          value = "/opt/albums" },
-        { name = "POSTGRES_HOST",       value = aws_db_instance.postgres.address },
-        { name = "POSTGRES_PORT",       value = tostring(aws_db_instance.postgres.port) },
-        { name = "POSTGRES_DB",         value = var.db_name },
-        { name = "POSTGRES_USER",       value = var.db_username },
-        { name = "POSTGRES_PASSWORD",   value = var.db_password },
+        { name = "ALBUMS_DIR", value = "/opt/albums" },
+        { name = "POSTGRES_HOST", value = aws_db_instance.postgres.address },
+        { name = "POSTGRES_PORT", value = tostring(aws_db_instance.postgres.port) },
+        { name = "POSTGRES_DB", value = var.db_name },
+        { name = "POSTGRES_USER", value = var.db_username },
+        { name = "POSTGRES_PASSWORD", value = var.db_password },
         { name = "SYNC_DISCS_ON_STARTUP", value = "1" },
-        { name = "EASYDNS_HOSTNAME",    value = var.easydns_hostname },
-        { name = "EASYDNS_USERNAME",    value = var.easydns_username },
-        { name = "EASYDNS_PASSWORD",    value = var.easydns_password }
+        { name = "EASYDNS_HOSTNAME", value = var.easydns_hostname },
+        { name = "EASYDNS_USERNAME", value = var.easydns_username },
+        { name = "EASYDNS_PASSWORD", value = var.easydns_password }
       ]
 
       logConfiguration = {
@@ -101,7 +101,7 @@ resource "aws_ecs_service" "apache" {
   ]
 
   lifecycle {
-    ignore_changes = [task_definition]  # allow CI/CD to update the task
+    ignore_changes = [task_definition] # allow CI/CD to update the task
   }
 
   tags = { Name = "${var.app_name}-apache-service" }

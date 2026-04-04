@@ -31,7 +31,7 @@ output "ecs_cluster_name" {
 
 output "push_commands" {
   description = "Docker push commands to build and push the Apache image to ECR"
-  value = <<-EOT
+  value       = <<-EOT
     # 1. Authenticate Docker to ECR
     aws ecr get-login-password --region ${var.aws_region} | \
       docker login --username AWS --password-stdin ${aws_ecr_repository.apache.repository_url}

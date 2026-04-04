@@ -31,7 +31,7 @@ resource "aws_iam_role" "ecs_task" {
 
 data "aws_iam_policy_document" "ecs_task_s3" {
   statement {
-    actions   = ["s3:GetObject", "s3:ListBucket"]
+    actions = ["s3:GetObject", "s3:ListBucket"]
     resources = [
       aws_s3_bucket.albums.arn,
       "${aws_s3_bucket.albums.arn}/*"
