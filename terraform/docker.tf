@@ -11,5 +11,7 @@ resource "docker_container" "apache" {
     external = 8585
   }
 
-  restart_policy = "always"
+  restart_policy {
+    name = "always"
+  }
 }
