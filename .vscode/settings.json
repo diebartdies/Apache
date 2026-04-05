@@ -22,7 +22,7 @@
         }
     ],
     "serverpulse.ai.optInShown": true,
-    "serverpulse.ai.enabled": true,
+    "serverpulse.ai.enabled": false,
     "files.watcherExclude": {
         "**/.git/**": true,
         "**/.venv/**": true,

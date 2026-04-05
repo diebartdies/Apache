@@ -70,6 +70,18 @@ def _price_to_minor_units(price: float) -> int:
     return max(50, int(round(price * 100)))
 
 
+def _checkout_price_for_currency(product: dict, currency: str) -> float:
+    code = (currency or "").strip().upper()
+    if code == "ARS":
+        ars = product.get("price_ars")
+        if ars is not None:
+            try:
+                return float(ars)
+            except (TypeError, ValueError):
+                pass
+    return float(product.get("price_usd", product.get("price", 9.99)))
+
+
 def create_checkout(provider: str, product: dict, base_url: str, buyer_ref: str = "") -> tuple[str, str]:
     if provider == "stripe":
         return _create_stripe_checkout(product, base_url, buyer_ref)
@@ -83,15 +95,17 @@ def _create_stripe_checkout(product: dict, base_url: str, buyer_ref: str = "") -
     if not secret_key:
         return "", "Stripe is not configured. Set STRIPE_SECRET_KEY."
 
+    stripe_currency = _stripe_currency()
+    stripe_price = _checkout_price_for_currency(product, stripe_currency)
     success_url = f"{base_url}/checkout/success?provider=stripe&id={urllib.parse.quote(product['id'], safe='')}&session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{base_url}/checkout/cancel?provider=stripe&id={urllib.parse.quote(product['id'], safe='')}"
     form_data = [
         ("mode", "payment"),
         ("success_url", success_url),
         ("cancel_url", cancel_url),
-        ("line_items[0][price_data][currency]", _stripe_currency()),
+        ("line_items[0][price_data][currency]", stripe_currency),
         ("line_items[0][price_data][product_data][name]", str(product["name"])),
-        ("line_items[0][price_data][unit_amount]", str(_price_to_minor_units(float(product["price"])))),
+        ("line_items[0][price_data][unit_amount]", str(_price_to_minor_units(stripe_price))),
         ("line_items[0][quantity]", "1"),
         ("metadata[product_id]", str(product["id"])),
     ]
@@ -121,6 +135,8 @@ def _create_mercadopago_checkout(product: dict, base_url: str, buyer_ref: str = 
     if not access_token:
         return "", "Mercado Pago is not configured. Set MERCADOPAGO_ACCESS_TOKEN."
 
+    mp_currency = _mercadopago_currency()
+    mp_price = _checkout_price_for_currency(product, mp_currency)
     product_id = urllib.parse.quote(product["id"], safe="")
     payload: dict = {
         "items": [
@@ -128,8 +144,8 @@ def _create_mercadopago_checkout(product: dict, base_url: str, buyer_ref: str = 
                 "id": str(product["id"]),
                 "title": str(product["name"]),
                 "quantity": 1,
-                "currency_id": _mercadopago_currency(),
-                "unit_price": float(product["price"]),
+                "currency_id": mp_currency,
+                "unit_price": mp_price,
             }
         ],
         "external_reference": str(product["id"]),
